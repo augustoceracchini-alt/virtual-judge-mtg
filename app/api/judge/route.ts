@@ -309,20 +309,39 @@ Tieni conto di questa cronologia per rispondere in modo coerente con quanto già
     // ricontrolla SOLO la logica/aritmetica della conclusione, isolata dal resto della
     // narrazione — non si attiva se la risposta è già una richiesta di chiarimenti all'utente
     // (in quel caso non c'è ancora un verdetto da verificare).
+    // Il controllo guarda entrambi i regolamenti: una condizione a più clausole può trovarsi
+    // anche nel regolamento torneistico, e comunque la verifica deve poter partire pure quando
+    // è quest'ultimo a reggere il verdetto.
     const necessitaVerifica =
-      !eRichiestaDiChiarimenti(risposta) && contieneRegolaCondizionaleComplessa(estrattiRegole);
+      !eRichiestaDiChiarimenti(risposta) &&
+      contieneRegolaCondizionaleComplessa(`${estrattiRegole}\n${estrattiRegoleTorneo}`);
 
     if (necessitaVerifica) {
+      // Il revisore deve vedere le stesse fonti su cui si regge il verdetto che sta
+      // controllando: se ricevesse solo le Comprehensive Rules, di fronte a una domanda di
+      // torneo ricalcolerebbe la conclusione senza sapere che esiste un regolamento
+      // torneistico, e potrebbe riscrivere un verdetto corretto scartando la fonte giusta.
+      const sezioneRegoleTorneoVerifica =
+        estrattiRegoleTorneo !== ""
+          ? `--- MAGIC TOURNAMENT RULES ---
+${estrattiRegoleTorneo}
+--- FINE MAGIC TOURNAMENT RULES ---
+
+Sulle procedure e policy di torneo (deck check, sideboard, gestione del tempo, comunicazione, tiebreaker, penalità, legalità dei formati e costruzione del mazzo) è il Magic Tournament Rules ad avere la precedenza sulle Comprehensive Rules: se la domanda riguarda una di queste materie, fonda la tua conclusione su di esso.
+
+`
+          : "";
+
       const promptVerifica = `Sei un revisore rigoroso di verdetti su regole di Magic: The Gathering. Segui questi passi ESATTAMENTE in ordine, senza saltarne nessuno e senza guardare in anticipo le informazioni dei passi successivi.
 
-PASSO 1 — Calcolo indipendente, usando SOLO queste Comprehensive Rules (fonte primaria, la più aggiornata: ignora per ora qualsiasi ruling di carta, lo vedrai solo al Passo 2):
+PASSO 1 — Calcolo indipendente, usando SOLO i regolamenti ufficiali qui sotto (fonte primaria, la più aggiornata: ignora per ora qualsiasi ruling di carta, lo vedrai solo al Passo 2):
 --- COMPREHENSIVE RULES ---
 ${estrattiRegole !== "" ? estrattiRegole : "(nessun estratto di CR disponibile per questa domanda)"}
 --- FINE COMPREHENSIVE RULES ---
 
-Domanda dell'utente (lo stato di gioco da cui partire): ${domanda}
+${sezioneRegoleTorneoVerifica}Domanda dell'utente (lo stato di gioco da cui partire): ${domanda}
 
-Se le CR sopra contengono una regola condizionale a più clausole (es. un'azione basata sullo stato con un confronto numerico, o più condizioni collegate da "e"/"and"), scomponi OGNI condizione richiesta come una riga separata "Condizione: <testo> → SÌ/NO, perché <motivo>", calcolando tu stesso da zero se è soddisfatta nello stato di gioco descritto — controlla con particolare attenzione l'aritmetica di eventuali confronti numerici, cifra per cifra. Scrivi poi una conclusione provvisoria (la conseguenza scatta o non scatta) basata SOLO su questo calcolo.
+Se i regolamenti sopra contengono una regola condizionale a più clausole (es. un'azione basata sullo stato con un confronto numerico, o più condizioni collegate da "e"/"and"), scomponi OGNI condizione richiesta come una riga separata "Condizione: <testo> → SÌ/NO, perché <motivo>", calcolando tu stesso da zero se è soddisfatta nello stato di gioco descritto — controlla con particolare attenzione l'aritmetica di eventuali confronti numerici, cifra per cifra. Scrivi poi una conclusione provvisoria (la conseguenza scatta o non scatta) basata SOLO su questo calcolo.
 
 PASSO 2 — Ora guarda anche i dati specifici delle carte (Oracle text e rulings, se presenti):
 ${sezioneCarte !== "" ? sezioneCarte : "(nessun dato di carta disponibile per questa domanda)"}
@@ -336,7 +355,7 @@ ${risposta}
 
 Se la conclusione finale del verdetto coincide con la tua, restituisci il verdetto originale ESATTAMENTE IDENTICO, senza modificarlo nemmeno di una virgola. Se invece il verdetto contraddice la tua conclusione (es. applica un ruling più vecchio nonostante la regola generale più recente indichi il contrario, oppure contiene un errore aritmetico o logico), riscrivi un verdetto corretto in italiano, con lo stesso stile e formato di quello originale, ma con la conclusione del tuo Passo 1/2.
 
-Restituisci SOLO il testo finale del verdetto (originale o corretto) da mostrare all'utente. I marcatori "--- COMPREHENSIVE RULES ---", "--- VERDETTO DA VERIFICARE ---", "PASSO 1", "PASSO 2", "PASSO 3" e simili sono SOLO struttura interna di QUESTO messaggio, per aiutarti a seguire l'ordine dei passi: non fanno parte del testo del verdetto e non devono MAI apparire nella tua risposta, nemmeno in parte o riformulati. Non mostrare i tuoi passi 1, 2, 3, non spiegare il tuo processo di revisione: la tua risposta deve iniziare direttamente con la prima frase del verdetto stesso, come se il verdetto originale non fosse mai stato preceduto da nessuna etichetta o intestazione.`;
+Restituisci SOLO il testo finale del verdetto (originale o corretto) da mostrare all'utente. I marcatori "--- COMPREHENSIVE RULES ---", "--- MAGIC TOURNAMENT RULES ---", "--- VERDETTO DA VERIFICARE ---", "PASSO 1", "PASSO 2", "PASSO 3" e simili sono SOLO struttura interna di QUESTO messaggio, per aiutarti a seguire l'ordine dei passi: non fanno parte del testo del verdetto e non devono MAI apparire nella tua risposta, nemmeno in parte o riformulati. Non mostrare i tuoi passi 1, 2, 3, non spiegare il tuo processo di revisione: la tua risposta deve iniziare direttamente con la prima frase del verdetto stesso, come se il verdetto originale non fosse mai stato preceduto da nessuna etichetta o intestazione.`;
 
       logDebug("[DEBUG] Prompt di verifica (FASE E) inviato a Gemini:", promptVerifica);
 
