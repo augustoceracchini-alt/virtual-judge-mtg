@@ -49,8 +49,65 @@ export function cercaRegolePertinenti(paroleChiave: string[], regoleCitate: stri
   return cercaBlocchiPertinenti(caricaDati("regole-compatte.json"), paroleChiave, regoleCitate);
 }
 
+// Ogni blocco dell'MTR inizia con il titolo della propria sottosezione, nella forma
+// "3.16 Sideboard: <corpo del testo>". Quel titolo è l'etichetta dell'argomento di policy
+// trattato dal blocco, molto più specifica dei 16 titoli di capitolo del documento
+// (che sono tutti generici: "Tournament Rules", "Communication", ...).
+const LUNGHEZZA_MASSIMA_TITOLO_SOTTOSEZIONE = 80;
+
+function titoloSottosezione(testoBlocco: string): string {
+  const posizioneDuePunti = testoBlocco.indexOf(":");
+  if (posizioneDuePunti === -1 || posizioneDuePunti > LUNGHEZZA_MASSIMA_TITOLO_SOTTOSEZIONE) {
+    return "";
+  }
+  return testoBlocco.slice(0, posizioneDuePunti);
+}
+
+// Riduce un testo a parole separate da spazi singoli, con uno spazio iniziale, in modo da poter
+// verificare con una semplice `includes` se una parola chiave comincia una parola del testo.
+function aSequenzaDiParole(testo: string): string {
+  return ` ${testo.toLowerCase().replace(/[^a-zà-ÿ0-9]+/g, " ").trim()}`;
+}
+
+// Verifica che `parolaChiave` compaia in `testo` all'inizio di una parola. Serve a evitare i
+// falsi positivi da sottostringa: senza questo controllo la parola chiave "layer" risultava
+// contenuta nel titolo "1.10 Players", facendo sembrare pertinente il regolamento torneistico
+// per una domanda sui layer degli effetti continui. Il vincolo è solo sull'inizio della parola,
+// non anche sulla fine, così una parola chiave al singolare continua a trovare il titolo al
+// plurale (la chiave "deck check" trova la sottosezione "2.8 Deck Checks").
+function iniziaUnaParolaDi(testo: string, parolaChiave: string): boolean {
+  return aSequenzaDiParole(testo).includes(aSequenzaDiParole(parolaChiave));
+}
+
 export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]): string {
-  return cercaBlocchiPertinenti(caricaDati("mtr-compatte.json"), paroleChiave, regoleCitate);
+  const dati = caricaDati("mtr-compatte.json");
+  const paroleChiaveNormalizzate = paroleChiave.map(normalizza).filter((p) => p.length > 2);
+
+  // L'MTR è una fonte secondaria: riguarda le procedure di torneo, non il funzionamento delle
+  // carte. Va quindi incluso solo quando la domanda tocca davvero quel dominio, altrimenti
+  // finisce nel prompt anche per domande di pura meccanica di gioco, rubando spazio alle
+  // Comprehensive Rules e distraendo il modello. Il filtro non può basarsi sul punteggio dei
+  // blocchi: i blocchi dell'MTR sono in media cinque volte più lunghi di quelli delle CR, e
+  // proprio i più lunghi intercettano per caso parole comuni come "damage" o "spell",
+  // sopravvivendo a qualsiasi soglia. Il titolo della sottosezione invece separa nettamente i
+  // due domini, perché nessun argomento di policy si chiama "damage" o "deathtouch".
+  const qualcheSottosezionePertinente = dati.blocchi.some((blocco) => {
+    const titolo = titoloSottosezione(blocco.testo);
+    return titolo !== "" && paroleChiaveNormalizzate.some((parola) => iniziaUnaParolaDi(titolo, parola));
+  });
+
+  // Una regola citata esplicitamente con la numerazione dell'MTR (es. "6.1") è comunque una
+  // richiesta diretta di consultare questo documento, anche se le parole chiave non toccano
+  // nessun titolo di sottosezione.
+  const citazioneAppartieneAllMtr = regoleCitate.some((regola) =>
+    dati.capitoli.some((capitolo) => capitolo.numero === regola.split(".")[0])
+  );
+
+  if (!qualcheSottosezionePertinente && !citazioneAppartieneAllMtr) {
+    return "";
+  }
+
+  return cercaBlocchiPertinenti(dati, paroleChiave, regoleCitate);
 }
 
 function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
