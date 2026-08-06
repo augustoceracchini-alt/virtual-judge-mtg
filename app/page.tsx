@@ -81,6 +81,13 @@ export default function Home() {
   const [immagine, setImmagine] = useState<ImmagineSelezionata | null>(null);
   const inputFileRef = useRef<HTMLInputElement>(null);
 
+  // Identifica la conversazione in corso. Viene incrementato a ogni azzeramento, così una
+  // richiesta partita prima dell'azzeramento può accorgersi, quando la risposta arriva, che
+  // intanto la conversazione è cambiata: senza questo controllo la risposta veniva aggiunta alla
+  // cronologia ormai vuota e compariva un verdetto del Giudice senza la domanda che lo aveva
+  // generato.
+  const conversazioneCorrenteRef = useRef(0);
+
   const handleSelezionaFoto = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) {
@@ -113,9 +120,11 @@ export default function Home() {
   };
 
   const handleNuovaConversazione = () => {
+    conversazioneCorrenteRef.current += 1;
     setCronologia([]);
     setMessaggioCorrente("");
     setErrore("");
+    setCaricamento(false);
     handleRimuoviFoto();
   };
 
@@ -126,6 +135,7 @@ export default function Home() {
 
     const testoMessaggio = messaggioCorrente;
     const cronologiaPrecedente = cronologia;
+    const conversazioneDiPartenza = conversazioneCorrenteRef.current;
 
     setCronologia((prev) => [...prev, { ruolo: "utente", testo: testoMessaggio }]);
     setMessaggioCorrente("");
@@ -152,6 +162,12 @@ export default function Home() {
 
       const dati = await response.json();
 
+      // La conversazione è stata azzerata mentre la richiesta era in volo: questa risposta
+      // riguarda una domanda che non è più sullo schermo e va scartata.
+      if (conversazioneCorrenteRef.current !== conversazioneDiPartenza) {
+        return;
+      }
+
       if (!response.ok) {
         setErrore(dati.errore || "Si è verificato un errore imprevisto.");
       } else {
@@ -163,10 +179,15 @@ export default function Home() {
         handleRimuoviFoto();
       }
     } catch (err) {
+      if (conversazioneCorrenteRef.current !== conversazioneDiPartenza) {
+        return;
+      }
       console.error("Errore di rete durante la richiesta al giudice:", err);
       setErrore("Impossibile contattare il server. Controlla la connessione.");
     } finally {
-      setCaricamento(false);
+      if (conversazioneCorrenteRef.current === conversazioneDiPartenza) {
+        setCaricamento(false);
+      }
     }
   };
 
