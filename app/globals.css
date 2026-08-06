@@ -1,26 +1,80 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f1ece1;
+  --foreground: #2b2620;
+  --foreground-muted: #6b6255;
+  --surface: #faf7f0;
+  --border: #cbc0a8;
+  --accent: #8a6d3b;
+  --bubble-user-bg: #2b2620;
+  --bubble-user-fg: #f1ece1;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-app-bg: var(--background);
+  --color-app-fg: var(--foreground);
+  --color-app-fg-muted: var(--foreground-muted);
+  --color-app-surface: var(--surface);
+  --color-app-border: var(--border);
+  --color-app-accent: var(--accent);
+  --color-bubble-user-bg: var(--bubble-user-bg);
+  --color-bubble-user-fg: var(--bubble-user-fg);
   --font-sans: var(--font-geist-sans);
+  --font-serif: var(--font-cinzel);
   --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #17161a;
+    --foreground: #e8e4da;
+    --foreground-muted: #9b958a;
+    --surface: #201f24;
+    --border: #3a3840;
+    --accent: #c9a86a;
+    --bubble-user-bg: #e8e4da;
+    --bubble-user-fg: #17161a;
   }
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  position: relative;
+}
+
+/* Grana sottile in stile "carta invecchiata", quasi impercettibile, per rompere la
+   piattezza dei colori dark/desaturati senza appesantire il rendering. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Trama di sfondo a griglia ripetuta, ispirata ai cinque simboli del colore di Magic
+   (sole, goccia, fiamma, foglia, gemma) ma disegnata con forme originali e generiche,
+   non l'iconografia dei simboli del mana di Wizards of the Coast. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  background-repeat: repeat;
+  background-size: 240px 240px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cg fill='%238a6d3b'%3E%3Cg transform='translate(40,40)'%3E%3Ccircle r='16'/%3E%3Cg stroke='%238a6d3b' stroke-width='6' stroke-linecap='round'%3E%3Cline x1='0' y1='-30' x2='0' y2='-22'/%3E%3Cline x1='0' y1='22' x2='0' y2='30'/%3E%3Cline x1='-30' y1='0' x2='-22' y2='0'/%3E%3Cline x1='30' y1='0' x2='22' y2='0'/%3E%3Cline x1='-21' y1='-21' x2='-16' y2='-16'/%3E%3Cline x1='21' y1='-21' x2='16' y2='-16'/%3E%3Cline x1='-21' y1='21' x2='-16' y2='16'/%3E%3Cline x1='21' y1='21' x2='16' y2='16'/%3E%3C/g%3E%3C/g%3E%3Cpath transform='translate(160,20)' d='M20 0C30 18 34 28 20 40C6 28 10 18 20 0Z'/%3E%3Cpath transform='translate(20,160)' d='M20 0C30 10 34 24 20 40C6 24 6 14 12 8C12 16 16 18 20 12C18 6 18 2 20 0Z'/%3E%3Cpath transform='translate(160,160)' d='M0 20C6 0 34 0 40 20C34 40 6 40 0 20Z'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* Diamante araldico che affianca il titolo: forma originale che richiama i cinque
+   colori senza riprodurre i simboli del mana proprietari di Wizards of the Coast. */
+.fregio-titolo {
+  fill: var(--accent);
 }

@@ -18,17 +18,19 @@ interface DatiRegole {
   blocchi: BloccoRegola[];
 }
 
-let datiCache: DatiRegole | null = null;
+const cacheDati = new Map<string, DatiRegole>();
 
-function caricaRegole(): DatiRegole {
-  if (datiCache) {
-    return datiCache;
+function caricaDati(nomeFile: string): DatiRegole {
+  const esistente = cacheDati.get(nomeFile);
+  if (esistente) {
+    return esistente;
   }
 
-  const percorsoFile = path.join(process.cwd(), "data", "regole-compatte.json");
+  const percorsoFile = path.join(process.cwd(), "data", nomeFile);
   const testoJson = fs.readFileSync(percorsoFile, "utf-8");
-  datiCache = JSON.parse(testoJson) as DatiRegole;
-  return datiCache;
+  const dati = JSON.parse(testoJson) as DatiRegole;
+  cacheDati.set(nomeFile, dati);
+  return dati;
 }
 
 function normalizza(testo: string): string {
@@ -36,11 +38,22 @@ function normalizza(testo: string): string {
 }
 
 export function getDataEfficaciaRegole(): string | null {
-  return caricaRegole().dataEfficacia;
+  return caricaDati("regole-compatte.json").dataEfficacia;
+}
+
+export function getDataEfficaciaRegoleTorneo(): string | null {
+  return caricaDati("mtr-compatte.json").dataEfficacia;
 }
 
 export function cercaRegolePertinenti(paroleChiave: string[], regoleCitate: string[]): string {
-  const dati = caricaRegole();
+  return cercaBlocchiPertinenti(caricaDati("regole-compatte.json"), paroleChiave, regoleCitate);
+}
+
+export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]): string {
+  return cercaBlocchiPertinenti(caricaDati("mtr-compatte.json"), paroleChiave, regoleCitate);
+}
+
+function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
   const paroleChiaveNormalizzate = paroleChiave.map(normalizza).filter((p) => p.length > 2);
 
   const punteggiCapitoli = dati.capitoli.map((capitolo) => {
@@ -62,7 +75,7 @@ export function cercaRegolePertinenti(paroleChiave: string[], regoleCitate: stri
 
   for (const regola of regoleCitate) {
     const numeroCapitolo = regola.split(".")[0];
-    if (numeroCapitolo && numeroCapitolo.length === 3 && !capitoliSelezionati.includes(numeroCapitolo)) {
+    if (numeroCapitolo && !capitoliSelezionati.includes(numeroCapitolo)) {
       capitoliSelezionati.push(numeroCapitolo);
     }
   }

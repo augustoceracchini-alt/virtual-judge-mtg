@@ -1,6 +1,11 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
-import { cercaRegolePertinenti, getDataEfficaciaRegole } from "@/lib/rules";
+import {
+  cercaRegolePertinenti,
+  cercaRegoleTorneo,
+  getDataEfficaciaRegole,
+  getDataEfficaciaRegoleTorneo,
+} from "@/lib/rules";
 import { cercaDatiCarta } from "@/lib/scryfall";
 
 const DEBUG_ATTIVO = process.env.DEBUG_JUDGE === "true";
@@ -173,6 +178,12 @@ ${testoCronologia !== "" ? `--- CRONOLOGIA DELLA CONVERSAZIONE FINORA ---\n${tes
     const estrattiRegole = cercaRegolePertinenti(keywordCombinate, citedRules);
     const dataEfficaciaRegole = getDataEfficaciaRegole();
 
+    // Oltre alle Comprehensive Rules (meccaniche di gioco), cerchiamo anche nel Magic
+    // Tournament Rules (MTR): procedure e policy di torneo (deck check, sideboard, tempo,
+    // comunicazione, tiebreaker, penalità, legalità dei formati) non sono coperte dalle CR.
+    const estrattiRegoleTorneo = cercaRegoleTorneo(keywordCombinate, citedRules);
+    const dataEfficaciaRegoleTorneo = getDataEfficaciaRegoleTorneo();
+
     let sezioneCarte = "";
     if (datiCarte.length > 0) {
       sezioneCarte = datiCarte
@@ -191,9 +202,10 @@ ${testoCronologia !== "" ? `--- CRONOLOGIA DELLA CONVERSAZIONE FINORA ---\n${tes
     let promptSistema = `Sei un assistente esperto di regole di Magic: The Gathering, che risponde nello stile di un giudice di torneo esperto, basandoti rigorosamente sulle fonti ufficiali fornite di seguito. Non sei un giudice certificato Wizards/DCI e non hai alcuna certificazione ufficiale: sei uno strumento di supporto basato su intelligenza artificiale, quindi non presentarti mai come "Judge L2" o simili, e non dichiarare o implicare di possedere certificazioni. Rispondi sempre in italiano, in modo chiaro e preciso.
 
 GERARCHIA DELLE FONTI da rispettare rigorosamente, in quest'ordine di priorità:
-1. Le Comprehensive Rules (CR) fornite qui sotto sono la fonte PRIMARIA e vanno controllate PER PRIME: sono aggiornate manualmente dal proprietario di questo strumento ogni volta che Wizards pubblica un nuovo aggiornamento ufficiale del regolamento, quindi rappresentano il funzionamento ATTUALE e più affidabile delle meccaniche di gioco (turni, state-based action, layer, sacrificio, timing, ecc.).
-2. L'Oracle Text della carta (da Scryfall), se presente, resta la fonte autorevole per il testo esatto stampato sulla carta e le sue abilità specifiche: usalo per sapere COSA FA la carta.
-3. I Rulings di Scryfall, se presenti, sono un utile chiarimento su interazioni specifiche di quella carta — MA ogni ruling riporta la propria data di pubblicazione, e le Comprehensive Rules fornite sopra riportano la propria data di validità. Se un ruling è PRECEDENTE alla data di validità delle Comprehensive Rules fornite E sembra in contraddizione con una regola generale lì presente su un meccanismo universale del gioco, NON fidarti ciecamente del ruling più vecchio: è possibile che Wizards abbia modificato quel meccanismo dopo la pubblicazione del ruling, rendendolo superato. In questo caso, applica la regola generale più recente per determinare l'esito, e segnala esplicitamente all'utente che esiste un ruling più datato apparentemente in conflitto, spiegando perché la regola più recente prevale. Se invece il ruling è pertinente e non contraddice nulla di più recente, resta comunque un'ottima fonte da citare.
+1. Le Comprehensive Rules (CR) fornite qui sotto sono la fonte PRIMARIA per le MECCANICHE DI GIOCO e vanno controllate PER PRIME: sono aggiornate manualmente dal proprietario di questo strumento ogni volta che Wizards pubblica un nuovo aggiornamento ufficiale del regolamento, quindi rappresentano il funzionamento ATTUALE e più affidabile delle meccaniche di gioco (turni, state-based action, layer, sacrificio, timing, ecc.).
+2. Il Magic Tournament Rules (MTR), se una sezione pertinente è fornita qui sotto, è la fonte da usare per le PROCEDURE E POLICY DI TORNEO — non il funzionamento delle carte in sé, ma tutto ciò che riguarda come si gioca un torneo sanzionato: deck check, sideboard, gestione del tempo, comunicazione tra giocatori, dispute e appelli, tiebreaker, penalità, legalità dei formati e costruzione del mazzo. Su queste materie l'MTR ha la PRECEDENZA sulle Comprehensive Rules in caso di conflitto: è l'MTR stesso a dichiararlo esplicitamente nella propria introduzione.
+3. L'Oracle Text della carta (da Scryfall), se presente, resta la fonte autorevole per il testo esatto stampato sulla carta e le sue abilità specifiche: usalo per sapere COSA FA la carta.
+4. I Rulings di Scryfall, se presenti, sono un utile chiarimento su interazioni specifiche di quella carta — MA ogni ruling riporta la propria data di pubblicazione, e le Comprehensive Rules fornite sopra riportano la propria data di validità. Se un ruling è PRECEDENTE alla data di validità delle Comprehensive Rules fornite E sembra in contraddizione con una regola generale lì presente su un meccanismo universale del gioco, NON fidarti ciecamente del ruling più vecchio: è possibile che Wizards abbia modificato quel meccanismo dopo la pubblicazione del ruling, rendendolo superato. In questo caso, applica la regola generale più recente per determinare l'esito, e segnala esplicitamente all'utente che esiste un ruling più datato apparentemente in conflitto, spiegando perché la regola più recente prevale. Se invece il ruling è pertinente e non contraddice nulla di più recente, resta comunque un'ottima fonte da citare.
 
 VERIFICA DELLE CONDIZIONI (obbligatoria prima di applicare qualsiasi regola generale): molte regole delle Comprehensive Rules sono condizionali — si applicano solo se una precisa condizione è soddisfatta (es. "un permanente CON una o più abilità di capitolo", "se il numero di X è maggiore o uguale a Y", "a meno che..."). Prima di applicare la conseguenza di una regola del genere, controlla ESPLICITAMENTE, condizione per condizione, se nello scenario descritto quella condizione è davvero soddisfatta in QUESTO momento (dopo aver applicato gli altri effetti già in gioco, non prima). Non applicare la conseguenza di una regola solo perché sembra topicamente pertinente all'argomento: se anche una sola condizione richiesta non è soddisfatta, la conseguenza di quella regola NON scatta — nemmeno se un ruling più vecchio di una carta descriveva un esito diverso, valido secondo una versione precedente della regola.
 
@@ -227,12 +239,20 @@ Se invece la domanda è già chiara e completa, procedi normalmente con il verde
 `;
     }
 
-    const haFontiDisponibili = sezioneCarte !== "" || estrattiRegole !== "";
+    const haFontiDisponibili = sezioneCarte !== "" || estrattiRegole !== "" || estrattiRegoleTorneo !== "";
 
     if (estrattiRegole !== "") {
-      promptSistema += `--- COMPREHENSIVE RULES UFFICIALI (FONTE PRIMARIA — efficaci a partire dal: ${dataEfficaciaRegole ?? "data non disponibile"}) ---
+      promptSistema += `--- COMPREHENSIVE RULES UFFICIALI (FONTE PRIMARIA PER LE MECCANICHE DI GIOCO — efficaci a partire dal: ${dataEfficaciaRegole ?? "data non disponibile"}) ---
 ${estrattiRegole}
 --- FINE COMPREHENSIVE RULES ---
+
+`;
+    }
+
+    if (estrattiRegoleTorneo !== "") {
+      promptSistema += `--- MAGIC TOURNAMENT RULES UFFICIALE (FONTE PRIMARIA PER PROCEDURE E POLICY DI TORNEO — efficace a partire dal: ${dataEfficaciaRegoleTorneo ?? "data non disponibile"}) ---
+${estrattiRegoleTorneo}
+--- FINE MAGIC TOURNAMENT RULES ---
 
 `;
     }
