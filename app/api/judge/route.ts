@@ -20,6 +20,49 @@ type MessaggioCronologia = {
   testo: string;
 };
 
+// La cronologia arriva dal client insieme alla domanda, quindi non è affidabile: chiunque può
+// costruire a mano la richiesta all'API. Va perciò validata e limitata come già si fa con la
+// domanda, per due motivi. Il primo è il consumo di quota: la cronologia finisce dentro i prompt
+// inviati a Gemini, e una cronologia arbitrariamente lunga gonfia ogni richiesta. Il secondo è la
+// correttezza: senza controllo sulla forma, un elemento privo del campo di testo verrebbe
+// interpolato nel prompt come "undefined", inquinando le istruzioni al modello.
+const MASSIMO_CARATTERI_CRONOLOGIA = 16000;
+
+function eMessaggioCronologiaValido(valore: unknown): valore is MessaggioCronologia {
+  if (valore === null || typeof valore !== "object") {
+    return false;
+  }
+  const messaggio = valore as Partial<MessaggioCronologia>;
+  return (
+    (messaggio.ruolo === "utente" || messaggio.ruolo === "giudice") &&
+    typeof messaggio.testo === "string"
+  );
+}
+
+function normalizzaCronologia(valore: unknown): MessaggioCronologia[] {
+  if (!Array.isArray(valore)) {
+    return [];
+  }
+
+  const messaggiValidi = valore.filter(eMessaggioCronologiaValido);
+
+  // Scorre dal messaggio più recente al più vecchio e si ferma quando il tetto complessivo è
+  // superato: il contesto che serve davvero al giudice è quello vicino all'ultima domanda, quindi
+  // di una conversazione molto lunga è giusto scartare la parte iniziale e non quella finale.
+  const messaggiSelezionati: MessaggioCronologia[] = [];
+  let caratteriUsati = 0;
+  for (let indice = messaggiValidi.length - 1; indice >= 0; indice--) {
+    const messaggio = messaggiValidi[indice];
+    if (caratteriUsati + messaggio.testo.length > MASSIMO_CARATTERI_CRONOLOGIA) {
+      break;
+    }
+    caratteriUsati += messaggio.testo.length;
+    messaggiSelezionati.unshift(messaggio);
+  }
+
+  return messaggiSelezionati;
+}
+
 // Indica se il testo delle regole citate contiene il tipo di regola condizionale a più
 // clausole (spesso un'azione basata sullo stato con un confronto numerico) su cui il modello
 // ha già mostrato di sbagliare più facilmente il ragionamento passo-passo (es. la regola 714.4
@@ -50,9 +93,7 @@ export async function POST(request: NextRequest) {
     const domanda = body.domanda;
     const immagineBase64 = body.immagineBase64;
     const mimeTypeImmagine = body.mimeTypeImmagine;
-    const cronologia: MessaggioCronologia[] = Array.isArray(body.cronologia)
-      ? body.cronologia
-      : [];
+    const cronologia: MessaggioCronologia[] = normalizzaCronologia(body.cronologia);
 
     if (typeof domanda === "string" && domanda.length > 2000) {
       return NextResponse.json(
