@@ -22,7 +22,6 @@
   --color-bubble-user-fg: var(--bubble-user-fg);
   --font-sans: var(--font-geist-sans);
   --font-serif: var(--font-cinzel);
-  --font-mono: var(--font-geist-mono);
 }
 
 @media (prefers-color-scheme: dark) {
