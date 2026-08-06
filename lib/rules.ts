@@ -73,9 +73,17 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
     .slice(0, 4)
     .map((c) => c.capitolo.numero);
 
+  // Un numero di regola citato porta con sé il capitolo di appartenenza (es. "510.1c" -> "510"),
+  // che aggiungiamo a quelli da esaminare. Il capitolo va però verificato contro l'indice del
+  // documento in cui stiamo effettivamente cercando: le due fonti hanno numerazioni diverse
+  // (le CR usano tre cifre, l'MTR va da "1" a "10" più le appendici "A"-"F") ma ricevono
+  // entrambe la stessa lista di citazioni. Senza questo controllo un capitolo inesistente
+  // nella fonte corrente renderebbe comunque `capitoliSelezionati` non vuoto, disattivando la
+  // ricerca globale di riserva più sotto e facendo restituire zero risultati.
   for (const regola of regoleCitate) {
     const numeroCapitolo = regola.split(".")[0];
-    if (numeroCapitolo && !capitoliSelezionati.includes(numeroCapitolo)) {
+    const capitoloEsisteInQuestaFonte = dati.capitoli.some((c) => c.numero === numeroCapitolo);
+    if (capitoloEsisteInQuestaFonte && !capitoliSelezionati.includes(numeroCapitolo)) {
       capitoliSelezionati.push(numeroCapitolo);
     }
   }
