@@ -79,35 +79,75 @@ function iniziaUnaParolaDi(testo: string, parolaChiave: string): boolean {
   return aSequenzaDiParole(testo).includes(aSequenzaDiParole(parolaChiave));
 }
 
+// Quanto testo di regolamento al massimo può finire nel prompt, per singola fonte.
+const LIMITE_CARATTERI = 9000;
+
+function assemblaEstratti(blocchiOrdinati: BloccoRegola[]): string {
+  let testoFinale = "";
+  for (const blocco of blocchiOrdinati) {
+    const prossimoBlocco = `[Capitolo ${blocco.numeroCapitolo} - ${blocco.titoloCapitolo}]\n${blocco.testo}\n\n`;
+    if ((testoFinale + prossimoBlocco).length > LIMITE_CARATTERI) {
+      break;
+    }
+    testoFinale += prossimoBlocco;
+  }
+  return testoFinale.trim();
+}
+
+// Quanto pesa, nell'ordinamento, il fatto che l'argomento della sottosezione corrisponda alla
+// domanda: deve contare più di qualsiasi numero di occorrenze sparse nel corpo del testo.
+const PUNTI_ARGOMENTO_PERTINENTE = 100;
+const PUNTI_REGOLA_CITATA = 100;
+
+// L'MTR ha una ricerca propria invece di condividere quella delle Comprehensive Rules, perché i
+// due documenti hanno strutture opposte. Le CR sono 3869 blocchi brevi distribuiti su 146
+// capitoli dai titoli specifici ("Sagas", "Lands"): lì selezionare prima i capitoli pertinenti
+// serve a evitare che un capitolo prolisso soffochi quello decisivo. L'MTR invece ha 94 blocchi
+// lunghi su appena 16 capitoli dai titoli quasi identici: la parola "Tournament" compare in
+// cinque titoli su sedici, che finiscono così a pari punteggio, e il taglio ai primi quattro
+// scarta arbitrariamente il capitolo giusto (una domanda su "bribery" selezionava i capitoli 3,
+// 6, 7 e 8, lasciando fuori il capitolo 5 dove sta la sottosezione "5.2 Bribery").
+// Qui il criterio è invece il titolo della sottosezione con cui ogni blocco inizia
+// ("5.2 Bribery: ...", "2.8 Deck Checks: ..."): è l'etichetta dell'argomento trattato, ed è
+// abbastanza specifica sia per trovare il blocco giusto sia per escludere l'intero documento
+// quando la domanda riguarda le meccaniche di gioco e non le procedure di torneo.
 export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]): string {
   const dati = caricaDati("mtr-compatte.json");
   const paroleChiaveNormalizzate = paroleChiave.map(normalizza).filter((p) => p.length > 2);
 
-  // L'MTR è una fonte secondaria: riguarda le procedure di torneo, non il funzionamento delle
-  // carte. Va quindi incluso solo quando la domanda tocca davvero quel dominio, altrimenti
-  // finisce nel prompt anche per domande di pura meccanica di gioco, rubando spazio alle
-  // Comprehensive Rules e distraendo il modello. Il filtro non può basarsi sul punteggio dei
-  // blocchi: i blocchi dell'MTR sono in media cinque volte più lunghi di quelli delle CR, e
-  // proprio i più lunghi intercettano per caso parole comuni come "damage" o "spell",
-  // sopravvivendo a qualsiasi soglia. Il titolo della sottosezione invece separa nettamente i
-  // due domini, perché nessun argomento di policy si chiama "damage" o "deathtouch".
-  const qualcheSottosezionePertinente = dati.blocchi.some((blocco) => {
+  const blocchiValutati = dati.blocchi.map((blocco) => {
     const titolo = titoloSottosezione(blocco.testo);
-    return titolo !== "" && paroleChiaveNormalizzate.some((parola) => iniziaUnaParolaDi(titolo, parola));
+    const testoNormalizzato = normalizza(blocco.testo);
+
+    const argomentoPertinente =
+      titolo !== "" && paroleChiaveNormalizzate.some((parola) => iniziaUnaParolaDi(titolo, parola));
+    const esplicitamenteCitato = regoleCitate.some((regola) => blocco.testo.startsWith(regola));
+
+    let punteggio = 0;
+    for (const parola of paroleChiaveNormalizzate) {
+      if (testoNormalizzato.includes(parola)) {
+        punteggio += 1;
+      }
+    }
+    if (argomentoPertinente) {
+      punteggio += PUNTI_ARGOMENTO_PERTINENTE;
+    }
+    if (esplicitamenteCitato) {
+      punteggio += PUNTI_REGOLA_CITATA;
+    }
+
+    // Le sole occorrenze nel corpo del testo non bastano ad ammettere un blocco: i blocchi
+    // dell'MTR sono in media cinque volte più lunghi di quelli delle CR e intercettano parole
+    // comuni come "damage" o "spell" per statistica, non per pertinenza.
+    return { blocco, punteggio, ammesso: argomentoPertinente || esplicitamenteCitato };
   });
 
-  // Una regola citata esplicitamente con la numerazione dell'MTR (es. "6.1") è comunque una
-  // richiesta diretta di consultare questo documento, anche se le parole chiave non toccano
-  // nessun titolo di sottosezione.
-  const citazioneAppartieneAllMtr = regoleCitate.some((regola) =>
-    dati.capitoli.some((capitolo) => capitolo.numero === regola.split(".")[0])
-  );
+  const pertinenti = blocchiValutati
+    .filter((valutato) => valutato.ammesso)
+    .sort((a, b) => b.punteggio - a.punteggio)
+    .map((valutato) => valutato.blocco);
 
-  if (!qualcheSottosezionePertinente && !citazioneAppartieneAllMtr) {
-    return "";
-  }
-
-  return cercaBlocchiPertinenti(dati, paroleChiave, regoleCitate);
+  return assemblaEstratti(pertinenti);
 }
 
 function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
@@ -187,19 +227,5 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
       .slice(0, 15);
   }
 
-  if (migliori.length === 0) {
-    return "";
-  }
-
-  const LIMITE_CARATTERI = 9000;
-  let testoFinale = "";
-  for (const item of migliori) {
-    const prossimoBlocco = `[Capitolo ${item.blocco.numeroCapitolo} - ${item.blocco.titoloCapitolo}]\n${item.blocco.testo}\n\n`;
-    if ((testoFinale + prossimoBlocco).length > LIMITE_CARATTERI) {
-      break;
-    }
-    testoFinale += prossimoBlocco;
-  }
-
-  return testoFinale.trim();
+  return assemblaEstratti(migliori.map((item) => item.blocco));
 }
