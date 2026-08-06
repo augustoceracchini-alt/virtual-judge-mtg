@@ -33,12 +33,38 @@ Non esiste una suite di test automatici. Il metodo di verifica standard del prog
 - `app/page.tsx` — interfaccia utente: chat multi-turno (cronologia dei messaggi utente/giudice), upload/scatto foto del tavolo con anteprima, pulsanti di risposta rapida ai chiarimenti del giudice
 - `app/api/judge/route.ts` — endpoint principale (`POST`), orchestratore di tutta la logica: estrazione parole chiave/carte, ricerca regole, ricerca Scryfall, costruzione del prompt finale e chiamata a Gemini (anche multimodale, se è allegata un'immagine)
 - `lib/rules.ts` — ricerca in entrambi i regolamenti, con due strategie diverse perché i due documenti hanno strutture opposte (vedi "Decisioni architetturali"): `cercaRegolePertinenti()` per le CR (a due fasi: macro capitolo poi micro blocco) e `cercaRegoleTorneo()` per l'MTR (per titolo di sottosezione)
+- `lib/errata.ts` — `cercaErrataPertinenti()`, corrispondenza per nome esatto (case-insensitive) contro `data/errata-locali.json`; vedi "Correzioni manuali" più sotto
 - `lib/scryfall.ts` — interrogazione API Scryfall per Oracle Text, Rulings e legalità nei formati principali, con cascata di ricerca fuzzy → autocomplete → ricerca testuale (quest'ultima con verifica di somiglianza del nome, per evitare di accettare una carta sbagliata)
 - `data/comprehensive-rules.txt` — testo grezzo ufficiale scaricato da media.wizards.com
 - `data/tournament-rules.pdf` — PDF ufficiale del Magic Tournament Rules scaricato da media.wizards.com
 - `data/regole-compatte.json` e `data/mtr-compatte.json` — versioni pre-elaborate (`{dataEfficacia, capitoli, blocchi}`) generate dai due script; **entrambe vanno committate** perché sono i file letti a runtime, e **dichiarate in `next.config.ts` sotto `outputFileTracingIncludes`**, altrimenti Vercel non le include nel pacchetto e in produzione la ricerca falla pur funzionando in locale
+- `data/errata-locali.json` — lista di correzioni manuali scritte a mano (non generata da uno script); anche questa va committata e dichiarata in `next.config.ts`, stessa regola degli altri due file dati
 - `scripts/prepara-regole.mjs` — script Node (ESM) che rigenera `regole-compatte.json` da `comprehensive-rules.txt`
 - `scripts/prepara-regole-torneo.mjs` — script Node (ESM) che rigenera `mtr-compatte.json` da `tournament-rules.pdf` (usa `pdf-parse`, dipendenza di sviluppo: non finisce nel bundle di produzione)
+
+## Correzioni manuali a rulings superati (`data/errata-locali.json`)
+
+Quando Wizards modifica una regola generale delle Comprehensive Rules, i rulings già pubblicati
+per le carte specifiche interessate NON vengono aggiornati automaticamente su Scryfall — restano
+scritti come se la regola vecchia fosse ancora in vigore. Il modello, davanti a un ruling molto
+specifico sulla carta esatta che contraddice una regola generale astratta, tende a fidarsi del
+ruling anche quando le istruzioni gli chiedono di dare priorità alla regola più recente (caso
+concreto: Urza's Saga + Blood Moon, benchmark del progetto, che senza questa correzione sbagliava
+circa una volta su quattro-cinque).
+
+Per i casi noti, si aggiunge una voce a `data/errata-locali.json`:
+
+```json
+{ "carte": ["Nome Esatto Della Carta"], "nota": "Spiegazione in italiano di perché il ruling vecchio è superato e qual è la conclusione corretta oggi." }
+```
+
+`carte` può elencare più nomi se la stessa nota vale per più carte. Il confronto è per nome esatto
+(case-insensitive, non parziale). La nota viene iniettata nel prompt con **priorità assoluta**,
+sopra anche le Comprehensive Rules — deve quindi affermare direttamente la conclusione corretta,
+non solo segnalare che il ruling vecchio è dubbio. Dopo aver aggiunto una voce, va anche eseguito
+di nuovo `npm run build` e verificato che `data/errata-locali.json` compaia nel file
+`.next/server/app/api/judge/route.js.nft.json`, altrimenti la correzione funziona in locale ma non
+in produzione.
 
 `lib/dizionario.ts` (dizionario italiano-inglese locale per l'estrazione di keyword senza Gemini) **non esiste ancora** — è un'ottimizzazione proposta ma non applicata, vedi "Cosa manca ancora".
 

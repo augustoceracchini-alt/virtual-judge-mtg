@@ -80,6 +80,24 @@ usarne il risultato.
 Dopo la rigenerazione, i file `data/*-compatte.json` vanno committati: sono quelli che l'app legge
 in produzione.
 
+## Correzioni manuali a rulings superati
+
+Quando Wizards modifica una regola generale, i rulings già pubblicati per le carte specifiche
+interessate non vengono aggiornati su Scryfall: restano scritti come se la regola vecchia fosse
+ancora in vigore. Il modello, davanti a un ruling molto specifico che contraddice una regola
+generale astratta, tende a fidarsi del primo anche quando le istruzioni gli chiedono il contrario.
+
+Per i casi noti (il primo è Urza's Saga + Blood Moon, dopo la modifica della regola 714.4 del
+2025), si aggiunge una voce a `data/errata-locali.json`:
+
+```json
+{ "carte": ["Nome Esatto Della Carta"], "nota": "Perché il ruling vecchio è superato e qual è la conclusione corretta oggi." }
+```
+
+La nota ha priorità assoluta nel prompt, sopra anche le Comprehensive Rules: deve affermare
+direttamente la conclusione corretta, non solo segnalare il dubbio. Dopo averla aggiunta va anche
+rifatto `npm run build`, per lo stesso motivo dei due file dati sopra.
+
 ## Configurazione
 
 Serve un file `.env.local` nella cartella del progetto:
@@ -132,7 +150,13 @@ Google Gemini (`gemini-3.5-flash-lite`) · API pubblica Scryfall · hosting Verc
 Il ragionamento su regole condizionali a più clausole (per esempio le azioni basate sullo stato con
 un confronto numerico) resta corretto in circa il 70-80% dei casi con il modello attualmente in uso,
 anche con il doppio controllo della fase E. È il limite del livello di modello scelto per rientrare
-nella quota gratuita, non un difetto correggibile con altre istruzioni nel prompt.
+nella quota gratuita: aggiungere altre istruzioni al prompt ha già mostrato rendimenti decrescenti.
+
+Per i casi specifici in cui questo porta a un errore noto e documentato (un ruling di una carta
+mai aggiornato dopo che Wizards ha cambiato la regola generale corrispondente), il file
+`data/errata-locali.json` permette di correggere il singolo caso senza intervenire sul modello —
+vedi "Correzioni manuali a rulings superati" sopra. Non generalizza a interazioni mai viste: copre
+solo i casi annotati a mano.
 
 Non esiste una suite di test automatici. La verifica si fa avviando `npm run dev` e interrogando
 l'endpoint, come descritto in `CLAUDE.md`.

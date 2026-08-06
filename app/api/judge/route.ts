@@ -6,6 +6,7 @@ import {
   getDataEfficaciaRegole,
   getDataEfficaciaRegoleTorneo,
 } from "@/lib/rules";
+import { cercaErrataPertinenti } from "@/lib/errata";
 import { cercaDatiCarta } from "@/lib/scryfall";
 
 const DEBUG_ATTIVO = process.env.DEBUG_JUDGE === "true";
@@ -182,7 +183,17 @@ ${testoCronologia !== "" ? `--- CRONOLOGIA DELLA CONVERSAZIONE FINORA ---\n${tes
 
     logDebug("[DEBUG] Nomi carte estratti dalla domanda:", JSON.stringify(cardNames));
 
-    // FASE B: cerca i dati ufficiali delle carte menzionate su Scryfall (massimo 6 carte per richiesta, in parallelo).
+    // Correzioni manuali a rulings superati: a differenza delle CR e dell'MTR non è un documento
+    // ufficiale, ma una lista curata a mano per i casi noti in cui il ruling di una carta specifica
+    // è superato da una modifica successiva delle Comprehensive Rules — il caso concreto che ha
+    // motivato questa fonte è Urza's Saga, il cui unico ruling disponibile su Scryfall resta quello
+    // del 2021, precedente alla modifica della regola 714.4 del 2025 che ne inverte la conclusione.
+    // Basta il nome della carta, non serve aspettare i dati Scryfall della FASE B.
+    const errataPertinenti = cercaErrataPertinenti(cardNames);
+
+    logDebug("[DEBUG] Correzioni manuali pertinenti:", errataPertinenti || "(nessuna)");
+
+    // FASE B: cerca i dati ufficiali delle carte menzionate su Scryfall (massimo 6 carte per richiesta, in sequenza).
     // Il limite non è più 3: con la cronologia multi-turno, card_names accumula tutte le carte
     // citate nell'intera conversazione (non solo nell'ultimo messaggio), quindi 3 tagliava
     // silenziosamente scenari con 4+ carte già in gioco dopo un paio di turni. 6 lascia margine
@@ -253,6 +264,7 @@ ${testoCronologia !== "" ? `--- CRONOLOGIA DELLA CONVERSAZIONE FINORA ---\n${tes
     let promptSistema = `Sei un assistente esperto di regole di Magic: The Gathering, che risponde nello stile di un giudice di torneo esperto, basandoti rigorosamente sulle fonti ufficiali fornite di seguito. Non sei un giudice certificato Wizards/DCI e non hai alcuna certificazione ufficiale: sei uno strumento di supporto basato su intelligenza artificiale, quindi non presentarti mai come "Judge L2" o simili, e non dichiarare o implicare di possedere certificazioni. Rispondi sempre in italiano, in modo chiaro e preciso.
 
 GERARCHIA DELLE FONTI da rispettare rigorosamente, in quest'ordine di priorità:
+0. Se qui sotto è presente una sezione di CORREZIONI MANUALI A RULINGS SUPERATI relativa a una carta citata, quella nota ha PRECEDENZA ASSOLUTA su qualsiasi altra fonte, incluse le Comprehensive Rules. Non è un'invenzione né una tua opinione: è stata scritta a mano dal proprietario di questo strumento appositamente per un caso noto in cui il ruling ufficiale di quella carta è superato da una modifica successiva delle Comprehensive Rules, un'informazione che gli estratti automatici delle altre fonti, da soli, non riescono a segnalare. Applica direttamente la conclusione indicata nella nota, senza ricalcolarla né metterla in discussione confrontandola con il ruling più vecchio della stessa carta mostrato più sotto.
 1. Le Comprehensive Rules (CR) fornite qui sotto sono la fonte PRIMARIA per le MECCANICHE DI GIOCO e vanno controllate PER PRIME: sono aggiornate manualmente dal proprietario di questo strumento ogni volta che Wizards pubblica un nuovo aggiornamento ufficiale del regolamento, quindi rappresentano il funzionamento ATTUALE e più affidabile delle meccaniche di gioco (turni, state-based action, layer, sacrificio, timing, ecc.).
 2. Il Magic Tournament Rules (MTR), se una sezione pertinente è fornita qui sotto, è la fonte da usare per le PROCEDURE E POLICY DI TORNEO — non il funzionamento delle carte in sé, ma tutto ciò che riguarda come si gioca un torneo sanzionato: deck check, sideboard, gestione del tempo, comunicazione tra giocatori, dispute e appelli, tiebreaker, penalità, legalità dei formati e costruzione del mazzo. Su queste materie l'MTR ha la PRECEDENZA sulle Comprehensive Rules in caso di conflitto: è l'MTR stesso a dichiararlo esplicitamente nella propria introduzione.
 3. L'Oracle Text della carta (da Scryfall), se presente, resta la fonte autorevole per il testo esatto stampato sulla carta e le sue abilità specifiche: usalo per sapere COSA FA la carta.
@@ -290,7 +302,16 @@ Se invece la domanda è già chiara e completa, procedi normalmente con il verde
 `;
     }
 
-    const haFontiDisponibili = sezioneCarte !== "" || estrattiRegole !== "" || estrattiRegoleTorneo !== "";
+    const haFontiDisponibili =
+      sezioneCarte !== "" || estrattiRegole !== "" || estrattiRegoleTorneo !== "" || errataPertinenti !== "";
+
+    if (errataPertinenti !== "") {
+      promptSistema += `--- CORREZIONI MANUALI A RULINGS SUPERATI (FONTE A PRIORITÀ ASSOLUTA, vedi punto 0 della gerarchia sopra) ---
+${errataPertinenti}
+--- FINE CORREZIONI MANUALI ---
+
+`;
+    }
 
     if (estrattiRegole !== "") {
       promptSistema += `--- COMPREHENSIVE RULES UFFICIALI (FONTE PRIMARIA PER LE MECCANICHE DI GIOCO — efficaci a partire dal: ${dataEfficaciaRegole ?? "data non disponibile"}) ---
@@ -383,9 +404,23 @@ Sulle procedure e policy di torneo (deck check, sideboard, gestione del tempo, c
 `
           : "";
 
+      // Stesso motivo per cui il revisore deve vedere l'MTR: se non vedesse questa fonte, potrebbe
+      // riscrivere un verdetto corretto scartandola, ricalcolando da zero con il solo ruling più
+      // vecchio in apparente contraddizione a disposizione.
+      const sezioneErrataVerifica =
+        errataPertinenti !== ""
+          ? `--- CORREZIONI MANUALI A RULINGS SUPERATI ---
+${errataPertinenti}
+--- FINE CORREZIONI MANUALI ---
+
+Questa nota ha PRECEDENZA ASSOLUTA su tutto il resto, incluse le Comprehensive Rules qui sotto e i rulings che vedrai al Passo 2: è stata scritta a mano per un caso noto in cui il ruling ufficiale della carta è superato da una modifica successiva delle regole. La tua conclusione al Passo 1 deve essere coerente con questa nota, non con un ruling più vecchio in apparente contraddizione.
+
+`
+          : "";
+
       const promptVerifica = `Sei un revisore rigoroso di verdetti su regole di Magic: The Gathering. Segui questi passi ESATTAMENTE in ordine, senza saltarne nessuno e senza guardare in anticipo le informazioni dei passi successivi.
 
-PASSO 1 — Calcolo indipendente, usando SOLO i regolamenti ufficiali qui sotto (fonte primaria, la più aggiornata: ignora per ora qualsiasi ruling di carta, lo vedrai solo al Passo 2):
+${sezioneErrataVerifica}PASSO 1 — Calcolo indipendente, usando SOLO i regolamenti ufficiali qui sotto (fonte primaria, la più aggiornata: ignora per ora qualsiasi ruling di carta, lo vedrai solo al Passo 2):
 --- COMPREHENSIVE RULES ---
 ${estrattiRegole !== "" ? estrattiRegole : "(nessun estratto di CR disponibile per questa domanda)"}
 --- FINE COMPREHENSIVE RULES ---
@@ -406,7 +441,7 @@ ${risposta}
 
 Se la conclusione finale del verdetto coincide con la tua, restituisci il verdetto originale ESATTAMENTE IDENTICO, senza modificarlo nemmeno di una virgola. Se invece il verdetto contraddice la tua conclusione (es. applica un ruling più vecchio nonostante la regola generale più recente indichi il contrario, oppure contiene un errore aritmetico o logico), riscrivi un verdetto corretto in italiano, con lo stesso stile e formato di quello originale, ma con la conclusione del tuo Passo 1/2.
 
-Restituisci SOLO il testo finale del verdetto (originale o corretto) da mostrare all'utente. I marcatori "--- COMPREHENSIVE RULES ---", "--- MAGIC TOURNAMENT RULES ---", "--- VERDETTO DA VERIFICARE ---", "PASSO 1", "PASSO 2", "PASSO 3" e simili sono SOLO struttura interna di QUESTO messaggio, per aiutarti a seguire l'ordine dei passi: non fanno parte del testo del verdetto e non devono MAI apparire nella tua risposta, nemmeno in parte o riformulati. Non mostrare i tuoi passi 1, 2, 3, non spiegare il tuo processo di revisione: la tua risposta deve iniziare direttamente con la prima frase del verdetto stesso, come se il verdetto originale non fosse mai stato preceduto da nessuna etichetta o intestazione.`;
+Restituisci SOLO il testo finale del verdetto (originale o corretto) da mostrare all'utente. I marcatori "--- CORREZIONI MANUALI A RULINGS SUPERATI ---", "--- COMPREHENSIVE RULES ---", "--- MAGIC TOURNAMENT RULES ---", "--- VERDETTO DA VERIFICARE ---", "PASSO 1", "PASSO 2", "PASSO 3" e simili sono SOLO struttura interna di QUESTO messaggio, per aiutarti a seguire l'ordine dei passi: non fanno parte del testo del verdetto e non devono MAI apparire nella tua risposta, nemmeno in parte o riformulati. Non mostrare i tuoi passi 1, 2, 3, non spiegare il tuo processo di revisione: la tua risposta deve iniziare direttamente con la prima frase del verdetto stesso, come se il verdetto originale non fosse mai stato preceduto da nessuna etichetta o intestazione.`;
 
       logDebug("[DEBUG] Prompt di verifica (FASE E) inviato a Gemini:", promptVerifica);
 
