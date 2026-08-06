@@ -75,7 +75,7 @@ function contieneRegolaCondizionaleComplessa(testoRegole: string): boolean {
     "less than or equal",
     "equal to or greater",
     "equal to or less",
-    " and it isn",
+    // Copre anche "and it isn't": qualsiasi testo che contenga quella forma contiene già questa.
     " and it is",
     "if the number of",
   ];
@@ -193,11 +193,21 @@ ${testoCronologia !== "" ? `--- CRONOLOGIA DELLA CONVERSAZIONE FINORA ---\n${tes
     // le keyword indovinate da Gemini in FASE A non sono sempre affidabili al 100% (in un test
     // reale hanno omesso "saga"/"chapter" per una domanda proprio su una carta Saga, facendo
     // sparire dal risultato il capitolo 714 delle CR, quello decisivo per la domanda).
+    // Le carte vengono cercate una dopo l'altra e non tutte insieme. Ogni ricerca è una catena di
+    // più chiamate a Scryfall (nome esatto, autocomplete, ricerca testuale, rulings) che al proprio
+    // interno già rispetta una pausa fra una chiamata e la successiva: lanciando sei catene in
+    // parallelo, però, quelle pause andavano perdute e si arrivava a sei richieste in contemporanea,
+    // molto oltre il ritmo che Scryfall chiede di tenere sulla propria API pubblica e gratuita.
+    // In sequenza la richiesta è più lenta solo negli scenari con molte carte, dove comunque il
+    // tempo è dominato dalle chiamate a Gemini.
     const cardNamesLimitate = cardNames.slice(0, 6);
-    const risultatiCarte = await Promise.all(
-      cardNamesLimitate.map((nomeCarta) => cercaDatiCarta(nomeCarta))
-    );
-    const datiCarte = risultatiCarte.filter((dati) => dati !== null);
+    const datiCarte = [];
+    for (const nomeCarta of cardNamesLimitate) {
+      const datiCarta = await cercaDatiCarta(nomeCarta);
+      if (datiCarta !== null) {
+        datiCarte.push(datiCarta);
+      }
+    }
 
     logDebug("[DEBUG] Risultati ricerca carte:", JSON.stringify(datiCarte.map((c) => (c ? c.nome : null))));
 
