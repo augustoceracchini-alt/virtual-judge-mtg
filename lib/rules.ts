@@ -75,6 +75,16 @@ function aSequenzaDiParole(testo: string): string {
 // per una domanda sui layer degli effetti continui. Il vincolo è solo sull'inizio della parola,
 // non anche sulla fine, così una parola chiave al singolare continua a trovare il titolo al
 // plurale (la chiave "deck check" trova la sottosezione "2.8 Deck Checks").
+//
+// La usano entrambe le ricerche. Nelle Comprehensive Rules sostituisce un confronto per
+// sottostringa che gonfiava il punteggio di blocchi e capitoli irrilevanti: "tap" faceva punto
+// dentro "untapped" in 48 blocchi, e il capitolo 722 "Controlling Another Player" veniva
+// selezionato per una domanda sui layer perché "layer" sta dentro "Player".
+//
+// Oltre a togliere quei falsi positivi migliora anche il recupero, perché normalizza la
+// punteggiatura su entrambi i lati del confronto: la parola chiave "state-based action" trova
+// ora anche un testo scritto "state based action", che con il confronto grezzo richiedeva
+// l'esatta trattinatura.
 function iniziaUnaParolaDi(testo: string, parolaChiave: string): boolean {
   return aSequenzaDiParole(testo).includes(aSequenzaDiParole(parolaChiave));
 }
@@ -154,10 +164,9 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   const paroleChiaveNormalizzate = paroleChiave.map(normalizza).filter((p) => p.length > 2);
 
   const punteggiCapitoli = dati.capitoli.map((capitolo) => {
-    const titoloNormalizzato = normalizza(capitolo.titolo);
     let punteggio = 0;
     for (const parola of paroleChiaveNormalizzate) {
-      if (titoloNormalizzato.includes(parola)) {
+      if (iniziaUnaParolaDi(capitolo.titolo, parola)) {
         punteggio += 1;
       }
     }
@@ -186,10 +195,9 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   }
 
   function calcolaPunteggioBlocco(blocco: BloccoRegola): number {
-    const testoNormalizzato = normalizza(blocco.testo);
     let punteggio = 0;
     for (const parola of paroleChiaveNormalizzate) {
-      if (testoNormalizzato.includes(parola)) {
+      if (iniziaUnaParolaDi(blocco.testo, parola)) {
         punteggio += 1;
       }
     }
