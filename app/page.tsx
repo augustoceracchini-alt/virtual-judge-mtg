@@ -1,36 +1,15 @@
 "use client";
 
 import { useRef, useState } from "react";
+import AllegatoFoto from "@/app/components/AllegatoFoto";
+import BollaMessaggio from "@/app/components/BollaMessaggio";
+import IntestazioneChat from "@/app/components/IntestazioneChat";
+import type { DomandaChiarimento, ImmagineSelezionata, MessaggioCronologia } from "@/app/tipi";
 
 // Illustrazione di "Balance" (Kev Walker) via Scryfall, usata come sfondo decorativo
 // dietro tutta la chat: stessa fonte di immagini già usata dall'app per i dati delle carte.
 const IMMAGINE_SFONDO =
   "https://cards.scryfall.io/art_crop/front/c/e/ce648aa3-098b-4af0-a433-fd290bc85904.jpg";
-
-function Fregio() {
-  return (
-    <svg viewBox="0 0 24 24" className="fregio-titolo h-5 w-5 shrink-0" aria-hidden="true">
-      <path d="M12 1 L15 9 L23 12 L15 15 L12 23 L9 15 L1 12 L9 9 Z" />
-    </svg>
-  );
-}
-
-type ImmagineSelezionata = {
-  base64: string;
-  mimeType: string;
-  anteprimaUrl: string;
-};
-
-type DomandaChiarimento = {
-  domanda: string;
-  opzioni: string[];
-};
-
-type MessaggioCronologia = {
-  ruolo: "utente" | "giudice";
-  testo: string;
-  chiarimenti?: DomandaChiarimento[];
-};
 
 function estraiTestoEChiarimenti(rispostaGrezza: string): {
   testo: string;
@@ -199,25 +178,10 @@ export default function Home() {
         aria-hidden="true"
       />
       <main className="relative z-10 flex w-full max-w-2xl flex-col gap-6 px-6 py-16">
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 border-b border-app-border pb-4">
-          <div />
-          <h1 className="flex items-center justify-center gap-3 font-serif text-3xl font-bold tracking-wide text-app-fg">
-            <Fregio />
-            Virtual Judge MTG
-            <Fregio />
-          </h1>
-          <div className="justify-self-end">
-            {cronologia.length > 0 && (
-              <button
-                type="button"
-                onClick={handleNuovaConversazione}
-                className="shrink-0 rounded-none border border-app-border px-3 py-2 text-sm font-medium text-app-fg-muted transition-colors duration-200 ease-out hover:border-app-accent hover:text-app-accent"
-              >
-                Nuova conversazione
-              </button>
-            )}
-          </div>
-        </div>
+        <IntestazioneChat
+          mostraNuovaConversazione={cronologia.length > 0}
+          onNuovaConversazione={handleNuovaConversazione}
+        />
 
         {cronologia.length === 0 && (
           <p className="text-center text-app-fg-muted">
@@ -228,53 +192,7 @@ export default function Home() {
         {cronologia.length > 0 && (
           <div className="flex flex-col gap-4">
             {cronologia.map((messaggio, indice) => (
-              <div
-                key={indice}
-                className={`flex ${messaggio.ruolo === "utente" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[85%] whitespace-pre-wrap rounded-sm p-4 shadow-sm transition-colors duration-200 ${
-                    messaggio.ruolo === "utente"
-                      ? "bg-bubble-user-bg text-bubble-user-fg"
-                      : "border border-app-border border-t-2 border-t-app-accent bg-app-surface text-app-fg"
-                  }`}
-                >
-                  {messaggio.ruolo === "giudice" && (
-                    <div className="mb-1 text-xs font-bold uppercase tracking-widest text-app-accent">
-                      Giudice
-                    </div>
-                  )}
-                  {messaggio.testo}
-
-                  {messaggio.ruolo === "giudice" &&
-                    messaggio.chiarimenti &&
-                    messaggio.chiarimenti.some((chiarimento) => chiarimento.opzioni.length > 0) && (
-                      <div className="mt-4 flex flex-col gap-3 border-t border-app-border pt-3">
-                        {messaggio.chiarimenti
-                          .filter((chiarimento) => chiarimento.opzioni.length > 0)
-                          .map((chiarimento, indiceChiarimento) => (
-                            <div key={indiceChiarimento} className="flex flex-col gap-2">
-                              <span className="text-xs text-app-fg-muted">
-                                {chiarimento.domanda}
-                              </span>
-                              <div className="flex flex-wrap gap-2">
-                                {chiarimento.opzioni.map((opzione, indiceOpzione) => (
-                                  <button
-                                    key={indiceOpzione}
-                                    type="button"
-                                    onClick={() => handleClickOpzione(chiarimento.domanda, opzione)}
-                                    className="rounded-full border border-app-border bg-app-bg px-3.5 py-1.5 text-sm font-medium text-app-fg shadow-sm transition-colors duration-200 ease-out hover:border-app-accent hover:text-app-accent focus:outline-none focus:ring-2 focus:ring-app-accent"
-                                  >
-                                    {opzione}
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-                          ))}
-                      </div>
-                    )}
-                </div>
-              </div>
+              <BollaMessaggio key={indice} messaggio={messaggio} onClickOpzione={handleClickOpzione} />
             ))}
           </div>
         )}
@@ -286,42 +204,12 @@ export default function Home() {
           className="w-full min-h-[150px] rounded-sm border border-app-border bg-app-surface p-4 text-app-fg shadow-sm transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-app-accent"
         />
 
-        <div className="flex flex-col gap-3">
-          <label
-            htmlFor="foto-tavolo"
-            className="w-full cursor-pointer rounded-sm border border-dashed border-app-border bg-app-surface p-4 text-center text-app-fg-muted transition-colors duration-200 hover:border-app-accent hover:text-app-accent"
-          >
-            📷 Allega o scatta una foto del tavolo (opzionale)
-          </label>
-          <input
-            id="foto-tavolo"
-            ref={inputFileRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handleSelezionaFoto}
-            className="hidden"
-          />
-
-          {immagine && (
-            <div className="relative w-fit">
-              {/* eslint-disable-next-line @next/next/no-img-element -- anteprima da data-URI generata al volo lato client (FileReader), non un asset remoto/statico adatto a next/image */}
-              <img
-                src={immagine.anteprimaUrl}
-                alt="Anteprima della foto del tavolo"
-                className="max-h-64 rounded-sm border border-app-border object-contain shadow-sm"
-              />
-              <button
-                type="button"
-                onClick={handleRimuoviFoto}
-                className="absolute -right-2 -top-2 flex h-7 w-7 items-center justify-center rounded-full bg-red-600 text-sm font-bold text-white shadow transition-colors duration-200 hover:bg-red-700"
-                aria-label="Rimuovi foto"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-        </div>
+        <AllegatoFoto
+          immagine={immagine}
+          inputFileRef={inputFileRef}
+          onSelezionaFoto={handleSelezionaFoto}
+          onRimuoviFoto={handleRimuoviFoto}
+        />
 
         <button
           onClick={handleInvia}
