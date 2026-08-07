@@ -207,25 +207,58 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   // solo perché un altro capitolo tra quelli scelti (es. 305 "Lands", con molti più blocchi)
   // ne ha tanti con punteggio pari o superiore.
   const MASSIMO_BLOCCHI_PER_CAPITOLO = 6;
-  let migliori: { blocco: BloccoRegola; punteggio: number }[] = [];
 
-  if (capitoliSelezionati.length > 0) {
-    for (const numeroCapitolo of capitoliSelezionati) {
-      const blocchiDelCapitolo = dati.blocchi.filter((b) => b.numeroCapitolo === numeroCapitolo);
-      const punteggiDelCapitolo = blocchiDelCapitolo
-        .map((blocco) => ({ blocco, punteggio: calcolaPunteggioBlocco(blocco) }))
-        .filter((b) => b.punteggio > 0)
-        .sort((a, b) => b.punteggio - a.punteggio)
-        .slice(0, MASSIMO_BLOCCHI_PER_CAPITOLO);
-      migliori.push(...punteggiDelCapitolo);
-    }
-  } else {
-    migliori = dati.blocchi
+  function miglioriBlocchiTra(blocchi: BloccoRegola[], quanti: number) {
+    return blocchi
       .map((blocco) => ({ blocco, punteggio: calcolaPunteggioBlocco(blocco) }))
       .filter((b) => b.punteggio > 0)
       .sort((a, b) => b.punteggio - a.punteggio)
-      .slice(0, 15);
+      .slice(0, quanti);
   }
 
-  return assemblaEstratti(migliori.map((item) => item.blocco));
+  const perCapitolo = capitoliSelezionati.flatMap((numeroCapitolo) =>
+    miglioriBlocchiTra(
+      dati.blocchi.filter((b) => b.numeroCapitolo === numeroCapitolo),
+      MASSIMO_BLOCCHI_PER_CAPITOLO
+    )
+  );
+
+  // La ricerca su tutto il documento non è più un ripiego per quando nessun capitolo viene
+  // selezionato: è SEMPRE attiva, come rete di sicurezza sopra la selezione per capitoli. Il
+  // pre-filtro sceglie i capitoli solo in base alle parole presenti nel loro TITOLO, e i titoli
+  // non contengono sempre il vocabolario della domanda: il capitolo 714 si intitola "Saga Cards"
+  // e non contiene "lore counter", il capitolo 702 si intitola "Keyword Abilities" e non contiene
+  // "deathtouch". Senza questa rete quei capitoli prendono punteggio 0, vengono eliminati prima
+  // del taglio ai primi quattro, e la regola decisiva viene scartata anche quando è il blocco col
+  // punteggio più alto dell'intero documento (misurato: 714.4 era primo su 3869 blocchi, e non
+  // compariva negli estratti).
+  //
+  // Quando invece nessun capitolo è stato selezionato la ricerca globale è l'unica fonte di
+  // risultati, e allora può prenderne di più: da sola non deve spartire il limite di caratteri
+  // con nient'altro.
+  // Il valore 3 è tenuto basso deliberatamente. Misurato con scripts/prova-ricerca.mjs: qualsiasi
+  // valore da 1 a 8 fa passare esattamente gli stessi casi, ma il testo complessivo inviato a
+  // Gemini cresce del 32% passando da 1 a 8 (40007 -> 52838 caratteri sui casi di prova). I blocchi
+  // in più non comprano niente di misurabile e consumano il limite di caratteri a scapito dei
+  // blocchi dei capitoli selezionati. Non è 1 solo per lasciare un margine: nei due casi misurati
+  // il blocco decisivo era primo in classifica, ma non c'è garanzia che lo sia sempre.
+  const MASSIMO_BLOCCHI_RETE_DI_SICUREZZA = 3;
+  const MASSIMO_BLOCCHI_SENZA_CAPITOLI = 15;
+  const quantiGlobali =
+    capitoliSelezionati.length > 0 ? MASSIMO_BLOCCHI_RETE_DI_SICUREZZA : MASSIMO_BLOCCHI_SENZA_CAPITOLI;
+  const globali = miglioriBlocchiTra(dati.blocchi, quantiGlobali);
+
+  // I blocchi trovati globalmente vanno per primi: sono i più pertinenti in assoluto, e solo
+  // stando in testa sopravvivono al limite di caratteri applicato da assemblaEstratti invece di
+  // essere accodati e troncati via.
+  const visti = new Set<BloccoRegola>();
+  const senzaDuplicati = [...globali, ...perCapitolo].filter(({ blocco }) => {
+    if (visti.has(blocco)) {
+      return false;
+    }
+    visti.add(blocco);
+    return true;
+  });
+
+  return assemblaEstratti(senzaDuplicati.map((item) => item.blocco));
 }
