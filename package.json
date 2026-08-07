@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "prova-ricerca": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-ricerca.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
