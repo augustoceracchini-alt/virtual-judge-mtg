@@ -9,13 +9,7 @@ import {
 import { cercaErrataPertinenti } from "@/lib/errata";
 import { cercaDatiCarta } from "@/lib/scryfall";
 import { costruisciPromptEstrazione, costruisciPromptSistema, costruisciPromptVerifica } from "@/lib/prompts";
-
-const DEBUG_ATTIVO = process.env.DEBUG_JUDGE === "true";
-function logDebug(...args: unknown[]) {
-  if (DEBUG_ATTIVO) {
-    console.log(...args);
-  }
-}
+import { logDebug } from "@/lib/debug";
 
 type MessaggioCronologia = {
   ruolo: "utente" | "giudice";

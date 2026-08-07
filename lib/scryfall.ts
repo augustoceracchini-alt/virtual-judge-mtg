@@ -1,9 +1,4 @@
-const DEBUG_ATTIVO = process.env.DEBUG_JUDGE === "true";
-function logDebug(...args: unknown[]) {
-  if (DEBUG_ATTIVO) {
-    console.log(...args);
-  }
-}
+import { logDebug } from "@/lib/debug";
 
 interface DatiCarta {
   nome: string;
