@@ -17,8 +17,9 @@ Chi sviluppa (Augusto) non sa programmare. Ogni istruzione data va accompagnata 
 - `npm run lint` — ESLint
 - `node scripts/prepara-regole.mjs` — da lanciare ogni volta che `data/comprehensive-rules.txt` viene aggiornato, per rigenerare `data/regole-compatte.json`
 - `node scripts/prepara-regole-torneo.mjs` — da lanciare ogni volta che `data/tournament-rules.pdf` viene aggiornato, per rigenerare `data/mtr-compatte.json`
+- `npm run prova-ricerca` — banco di prova della ricerca locale nei regolamenti: importa le funzioni reali di `lib/rules.ts` e verifica su casi fissi che i blocchi decisivi vengano recuperati, senza chiamare Gemini (gratuito, istantaneo, deterministico); usarlo per capire se una modifica a `lib/rules.ts` migliora o peggiora il recupero, invece di indovinarlo
 
-Non esiste una suite di test automatici. Il metodo di verifica standard del progetto è: avviare `npm run dev`, poi testare l'endpoint con `Invoke-RestMethod` da PowerShell (vedi "Note di stile" sotto) e/o dal browser.
+Non esiste una suite di test automatici end-to-end. Il metodo di verifica standard del progetto è: avviare `npm run dev`, poi testare l'endpoint con `Invoke-RestMethod` da PowerShell (vedi "Note di stile" sotto) e/o dal browser; per la sola ricerca nei regolamenti c'è anche `npm run prova-ricerca` (vedi sopra).
 
 ## Stack tecnologico
 - Next.js 16.2.12 (App Router), TypeScript, Tailwind CSS
@@ -110,15 +111,16 @@ Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge
 - Pulsanti di risposta rapida alle domande di chiarimento del giudice
 - Script `prepara-regole.mjs` per compattare il regolamento in JSON (146 capitoli, 3869 blocchi trovati nell'ultimo run)
 - Validazione input in `route.ts`: lunghezza massima della domanda (2000 caratteri), tipo di immagine consentito (PNG/JPEG/WEBP), dimensione massima dell'immagine (~8MB, calcolata sulla lunghezza della stringa base64) e cronologia validata nella forma (solo elementi con `ruolo` ammesso e `testo` di tipo stringa) e limitata a 16000 caratteri complessivi, tenendo i messaggi più recenti
-- Log di debug (`[DEBUG]` in `route.ts` e `[DEBUG Scryfall]` in `lib/scryfall.ts`) disattivabili tramite la variabile d'ambiente `DEBUG_JUDGE` (attivi solo se `DEBUG_JUDGE=true` in `.env.local`, altrimenti silenziosi)
+- Log di debug (`[DEBUG]` in `route.ts` e `[DEBUG Scryfall]` in `lib/scryfall.ts`) disattivabili tramite la variabile d'ambiente `DEBUG_JUDGE` (attivi solo se `DEBUG_JUDGE=true` in `.env.local`, altrimenti silenziosi), tramite la funzione condivisa `logDebug` in `lib/debug.ts` (non più duplicata fra i due file)
+- PWA installabile — `public/manifest.json`, icone reali (192/512, standard e maskable) generate con `scripts/genera-icone-pwa.mjs`, metadata `appleWebApp`/`icons` e `viewport.themeColor` in `app/layout.tsx`
+- Limite di richieste per IP — 20 richieste ogni 10 minuti (`lib/limite.ts`), contatore in memoria del processo: protezione parziale (si azzera ai cold start su Vercel, non condivisa tra istanze), ma molto meglio di nessun limite
+- Recupero delle regole (CR) corretto: ricerca globale di sicurezza sempre attiva anche quando dei capitoli erano già stati selezionati (prima scattava solo se nessun capitolo veniva trovato) e confronto per parola intera invece che per sottostringa (evita falsi positivi tipo "tap" dentro "untapped"); verificato con `npm run prova-ricerca` (8 casi, passava da 5/8 a 8/8)
+- Tono dei messaggi di errore in `route.ts` — verificato in questa sessione, giudicato adeguato così com'è
+- Refactor completati: testi dei prompt estratti in `lib/prompts.ts`, `app/page.tsx` spezzata in componenti (`app/components/AllegatoFoto.tsx`, `BollaMessaggio.tsx`, `IntestazioneChat.tsx`)
 
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
-- PWA installabile — **`manifest.json` non esiste ancora nel progetto**, mancano le icone reali (`icon-192.png`, `icon-512.png`) e i metadata relativi in `app/layout.tsx`
 - Affidabilità sulle regole condizionali — il ragionamento su regole a più clausole (azioni basate sullo stato con confronti numerici) resta corretto in circa il 70-80% dei casi anche con la FASE E. Ulteriori istruzioni nel prompt hanno mostrato rendimenti decrescenti: ogni aggiustamento spostava il tipo di errore invece di eliminarlo. La strada rimasta è un livello di modello superiore per le FASI D/E, da valutare contro la quota gratuita — **decisione non ancora presa dall'utente**
-- Ottimizzazione velocità — ogni domanda fa 2 chiamate Gemini sequenziali (3 se scatta la FASE E), percepite come lente; soluzione ibrida proposta (dizionario locale IT-EN in `lib/dizionario.ts`, fallback a Gemini solo se il dizionario non basta) — **non ancora applicata**, il file non esiste
-- Limite di richieste implementato — 20 richieste ogni 10 minuti per IP (`lib/limite.ts`), contatore in memoria del processo: protezione parziale (si azzera ai cold start su Vercel, non condivisa tra istanze), ma molto meglio di nessun limite
-- Uniformare tutti i messaggi di errore con un tono più simpatico (in corso, l'utente ne aveva già modificato uno)
-- Semplificazioni individuate e non ancora applicate: estrarre i testi dei prompt da `route.ts` (che è lungo circa 400 righe, di cui buona parte stringhe di prompt) in un modulo dedicato; spezzare `app/page.tsx` in componenti; unificare la funzione `logDebug` duplicata fra `route.ts` e `lib/scryfall.ts`
+- Ottimizzazione velocità — ogni domanda fa 2 chiamate Gemini sequenziali (3 se scatta la FASE E), percepite come lente; soluzione ibrida proposta (dizionario locale IT-EN in `lib/dizionario.ts`, fallback a Gemini solo se il dizionario non basta) — **non ancora applicata**, il file non esiste; rimandata finché non si misura se serve davvero, dato che il recupero delle regole è arrivato a 8/8 nel banco di prova senza glossario
 - Le note di lavoro personali (fra cui `REVISIONE.md`) sono in `note-di-lavoro/`, cartella esclusa da git
 
 ## Note di stile per chi genera codice su questo progetto
