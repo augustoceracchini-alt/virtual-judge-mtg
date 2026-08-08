@@ -161,4 +161,7 @@ solo i casi annotati a mano.
 Non esiste una suite di test automatici. La verifica si fa avviando `npm run dev` e interrogando
 l'endpoint, come descritto in `CLAUDE.md`.
 
-Non c'è limite di richieste per utente: la quota Gemini è condivisa da chiunque abbia il link.
+Limite di 20 richieste ogni 10 minuti per IP (`lib/limite.ts`), per evitare che una singola persona
+esaurisca la quota Gemini condivisa da chiunque abbia il link. Il contatore vive in memoria del
+processo: su Vercel free si azzera ai cold start e non è condiviso tra istanze parallele, quindi è
+una protezione parziale, non assoluta.

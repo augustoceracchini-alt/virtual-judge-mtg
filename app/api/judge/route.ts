@@ -10,6 +10,7 @@ import { cercaErrataPertinenti } from "@/lib/errata";
 import { cercaDatiCarta } from "@/lib/scryfall";
 import { costruisciPromptEstrazione, costruisciPromptSistema, costruisciPromptVerifica } from "@/lib/prompts";
 import { logDebug } from "@/lib/debug";
+import { richiestaConsentita } from "@/lib/limite";
 
 type MessaggioCronologia = {
   ruolo: "utente" | "giudice";
@@ -83,7 +84,22 @@ function eRichiestaDiChiarimenti(risposta: string): boolean {
   return risposta.includes("===OPZIONI_CHIARIMENTO===") || risposta.includes("Ho bisogno di alcuni chiarimenti");
 }
 
+// Vercel popola questo header con l'IP del client in testa alla lista. In sviluppo locale
+// l'header non è presente: tutte le richieste condividono lo stesso contatore, accettabile perché
+// non è l'ambiente da proteggere.
+function ipClient(request: NextRequest): string {
+  const forwarded = request.headers.get("x-forwarded-for");
+  return forwarded ? forwarded.split(",")[0].trim() : "ip-sconosciuto";
+}
+
 export async function POST(request: NextRequest) {
+  if (!richiestaConsentita(ipClient(request))) {
+    return NextResponse.json(
+      { errore: "Troppe richieste da questo indirizzo IP. Riprova tra qualche minuto." },
+      { status: 429 }
+    );
+  }
+
   try {
     const body = await request.json();
     const domanda = body.domanda;
