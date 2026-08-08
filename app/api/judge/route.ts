@@ -25,6 +25,13 @@ type MessaggioCronologia = {
 // interpolato nel prompt come "undefined", inquinando le istruzioni al modello.
 const MASSIMO_CARATTERI_CRONOLOGIA = 16000;
 
+// Due modelli diversi per due scopi diversi. MODELLO_STANDARD (quota gratuita generosa) gira su
+// ogni domanda, nelle FASI A e D. MODELLO_VERIFICA ragiona meglio ma ha una quota gratuita molto
+// più stretta (~20 richieste/giorno): usarlo solo nella FASE E, che scatta già solo per le
+// domande con regole condizionali complesse, non per ogni domanda.
+const MODELLO_STANDARD = "gemini-3.5-flash-lite";
+const MODELLO_VERIFICA = "gemini-3.6-flash";
+
 function eMessaggioCronologiaValido(valore: unknown): valore is MessaggioCronologia {
   if (valore === null || typeof valore !== "object") {
     return false;
@@ -158,7 +165,7 @@ export async function POST(request: NextRequest) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-3.5-flash-lite" });
+    const model = genAI.getGenerativeModel({ model: MODELLO_STANDARD });
 
     const testoCronologia = cronologia
       .map((messaggio) => `${messaggio.ruolo === "utente" ? "Utente" : "Giudice"}: ${messaggio.testo}`)
@@ -318,13 +325,27 @@ export async function POST(request: NextRequest) {
 
       logDebug("[DEBUG] Prompt di verifica (FASE E) inviato a Gemini:", promptVerifica);
 
-      const risultatoVerifica = await model.generateContent(promptVerifica);
-      const rispostaVerificata = risultatoVerifica.response.text().trim();
+      // MODELLO_VERIFICA ha una quota gratuita molto più stretta di MODELLO_STANDARD: se la
+      // chiamata fallisce (quota esaurita o qualunque altro errore), il verdetto della FASE D è
+      // comunque valido e non va perso. Per questo la chiamata ha un try/catch dedicato, invece
+      // di lasciare che l'errore risalga al catch esterno del POST (che restituirebbe un errore
+      // generico all'utente, buttando via un verdetto già pronto per un problema di quota che non
+      // lo riguarda).
+      try {
+        const modelVerifica = genAI.getGenerativeModel({ model: MODELLO_VERIFICA });
+        const risultatoVerifica = await modelVerifica.generateContent(promptVerifica);
+        const rispostaVerificata = risultatoVerifica.response.text().trim();
 
-      logDebug("[DEBUG] Risposta della verifica (FASE E):", rispostaVerificata);
+        logDebug("[DEBUG] Risposta della verifica (FASE E):", rispostaVerificata);
 
-      if (rispostaVerificata !== "") {
-        risposta = rispostaVerificata;
+        if (rispostaVerificata !== "") {
+          risposta = rispostaVerificata;
+        }
+      } catch (erroreVerifica) {
+        console.error(
+          "Errore nella verifica FASE E (si procede con il verdetto non verificato):",
+          erroreVerifica
+        );
       }
     }
 

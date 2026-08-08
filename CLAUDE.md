@@ -93,8 +93,18 @@ Il sistema non si presenta MAI come giudice certificato/L2 — è un requisito e
 ## Modelli Gemini: storia e stato attuale
 - gemini-1.5-flash: NON disponibile per progetti nuovi (ritirato aprile 2025)
 - gemini-2.5-flash: NON disponibile per nuovi utenti (dismissione ottobre 2026)
-- gemini-3.6-flash: funziona ma quota gratuita di sole 20 richieste/GIORNO (troppo poche per uso frequente)
-- gemini-3.5-flash-lite: MODELLO ATTUALMENTE USATO in route.ts, quota gratuita molto più generosa, adatto a questo caso d'uso
+- gemini-3.6-flash: quota gratuita di sole ~20 richieste/GIORNO (troppo poche per usarlo su ogni domanda), ma ragiona meglio di flash-lite — usato SOLO nella FASE E (vedi sotto)
+- gemini-3.5-flash-lite: MODELLO STANDARD usato in route.ts per FASI A e D (ogni domanda), quota gratuita molto più generosa
+- I modelli Pro sono ormai disponibili solo a pagamento — non un'opzione per questo progetto (resta gratuito)
+
+Due modelli diversi in `route.ts` (costanti `MODELLO_STANDARD`/`MODELLO_VERIFICA`): `gemini-3.6-flash`
+ragiona meglio ma la sua quota stretta lo rende inadatto a girare su ogni domanda, quindi è usato
+solo nella FASE E (il doppio controllo, che scatta già solo per le regole condizionali complesse).
+La chiamata alla FASE E ha un `try/catch` dedicato: se fallisce (quota esaurita o altro errore), si
+procede restituendo il verdetto della FASE D non verificato invece di un errore all'utente. L'effetto
+reale sulla correttezza non è stato misurato con un banco di prova (a differenza del recupero regole,
+verificare la correttezza di un verdetto in linguaggio naturale non si presta a un test automatico
+come `prova-ricerca`) — è un miglioramento motivato dal punteggio di benchmark del modello.
 
 Se in futuro un modello dà errore 404/429, verificare via web search il nome/quota aggiornati prima di cambiare codice — Google aggiorna spesso la disponibilità dei modelli.
 
@@ -117,9 +127,10 @@ Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge
 - Recupero delle regole (CR) corretto: ricerca globale di sicurezza sempre attiva anche quando dei capitoli erano già stati selezionati (prima scattava solo se nessun capitolo veniva trovato) e confronto per parola intera invece che per sottostringa (evita falsi positivi tipo "tap" dentro "untapped"); verificato con `npm run prova-ricerca` (8 casi, passava da 5/8 a 8/8)
 - Tono dei messaggi di errore in `route.ts` — verificato in questa sessione, giudicato adeguato così com'è
 - Refactor completati: testi dei prompt estratti in `lib/prompts.ts`, `app/page.tsx` spezzata in componenti (`app/components/AllegatoFoto.tsx`, `BollaMessaggio.tsx`, `IntestazioneChat.tsx`)
+- Cache in memoria per le ricerche Scryfall (`lib/scryfall.ts`) — evita di rifare le stesse chiamate di rete per carte già cercate, condivisa da tutte le richieste sulla stessa istanza calda del processo
+- Affidabilità sulle regole condizionali — decisione presa: FASE E (il doppio controllo sulle regole a più clausole) usa `gemini-3.6-flash` invece di `gemini-3.5-flash-lite`, con fallback al verdetto FASE D non verificato se la quota stretta di quel modello si esaurisce (vedi "Modelli Gemini" sopra). Ulteriori istruzioni nel prompt avevano già mostrato rendimenti decrescenti prima di questa decisione. Effetto reale non misurato con un banco di prova (a differenza del recupero regole)
 
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
-- Affidabilità sulle regole condizionali — il ragionamento su regole a più clausole (azioni basate sullo stato con confronti numerici) resta corretto in circa il 70-80% dei casi anche con la FASE E. Ulteriori istruzioni nel prompt hanno mostrato rendimenti decrescenti: ogni aggiustamento spostava il tipo di errore invece di eliminarlo. La strada rimasta è un livello di modello superiore per le FASI D/E, da valutare contro la quota gratuita — **decisione non ancora presa dall'utente**
 - Ottimizzazione velocità — ogni domanda fa 2 chiamate Gemini sequenziali (3 se scatta la FASE E), percepite come lente; soluzione ibrida proposta (dizionario locale IT-EN in `lib/dizionario.ts`, fallback a Gemini solo se il dizionario non basta) — **non ancora applicata**, il file non esiste; rimandata finché non si misura se serve davvero, dato che il recupero delle regole è arrivato a 8/8 nel banco di prova senza glossario
 - Le note di lavoro personali (fra cui `REVISIONE.md`) sono in `note-di-lavoro/`, cartella esclusa da git
 
