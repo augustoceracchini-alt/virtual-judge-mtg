@@ -136,7 +136,32 @@ async function cercaCartaTestuale(nomeCarta: string) {
   return carta;
 }
 
+// Cache condivisa da tutte le richieste che arrivano alla stessa istanza calda del processo (non
+// solo entro una singola conversazione): i dati di una carta su Scryfall sono identici per
+// chiunque la chieda, quindi evita di rifare la stessa catena di chiamate di rete già fatta in un
+// turno precedente o da un'altra conversazione. Si azzera ai cold start, come già accettato per
+// lib/limite.ts. Cachiamo anche gli esiti `null` (carta non trovata), per non ritentare a ogni
+// turno una ricerca già fallita per un nome scritto male o inesistente. Nessun TTL né limite di
+// dimensione: il set di carte Magic è finito (~30.000) e i dati Scryfall cambiano di rado.
+const cacheCarte = new Map<string, DatiCarta | null>();
+
+function chiaveCache(nomeCarta: string): string {
+  return nomeCarta.trim().toLocaleLowerCase();
+}
+
 export async function cercaDatiCarta(nomeCarta: string): Promise<DatiCarta | null> {
+  const chiave = chiaveCache(nomeCarta);
+  if (cacheCarte.has(chiave)) {
+    logDebug("[DEBUG Scryfall] Carta già in cache, nessuna chiamata di rete:", nomeCarta);
+    return cacheCarte.get(chiave)!;
+  }
+
+  const risultato = await cercaDatiCartaSuScryfall(nomeCarta);
+  cacheCarte.set(chiave, risultato);
+  return risultato;
+}
+
+async function cercaDatiCartaSuScryfall(nomeCarta: string): Promise<DatiCarta | null> {
   logDebug("[DEBUG Scryfall] Cerco la carta:", nomeCarta);
 
   try {
