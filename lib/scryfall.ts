@@ -49,11 +49,22 @@ function attendi(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Un 404 di Scryfall significa "questa carta non c'è": è una risposta valida, e restituire null la
+// comunica al chiamante. Qualsiasi ALTRO stato non-ok (429, 5xx) è invece un guasto temporaneo, e
+// va distinto lanciando un errore: se lo trattassimo come "non trovata", la cache memorizzerebbe
+// l'assenza e la carta resterebbe irrecuperabile per tutta la vita del processo.
+function verificaRispostaScryfall(risposta: Response, descrizione: string): void {
+  if (!risposta.ok && risposta.status !== 404) {
+    throw new Error(`Scryfall ha risposto ${risposta.status} durante ${descrizione}`);
+  }
+}
+
 async function cercaCartaFuzzy(nomeCarta: string) {
   const urlRicerca = `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(nomeCarta)}`;
   const rispostaCarta = await fetch(urlRicerca, { headers: INTESTAZIONI });
   logDebug(`[DEBUG Scryfall] Tentativo fuzzy per '${nomeCarta}': status =`, rispostaCarta.status);
 
+  verificaRispostaScryfall(rispostaCarta, `la ricerca fuzzy di "${nomeCarta}"`);
   if (!rispostaCarta.ok) {
     return null;
   }
@@ -66,6 +77,7 @@ async function cercaCartaAutocomplete(nomeCarta: string) {
   const rispostaAutocomplete = await fetch(urlAutocomplete, { headers: INTESTAZIONI });
   logDebug(`[DEBUG Scryfall] Tentativo autocomplete per '${nomeCarta}': status =`, rispostaAutocomplete.status);
 
+  verificaRispostaScryfall(rispostaAutocomplete, `l'autocomplete di "${nomeCarta}"`);
   if (!rispostaAutocomplete.ok) {
     return null;
   }
@@ -86,6 +98,7 @@ async function cercaCartaAutocomplete(nomeCarta: string) {
     rispostaEsatta.status
   );
 
+  verificaRispostaScryfall(rispostaEsatta, `la ricerca esatta di "${primoSuggerimento}"`);
   if (!rispostaEsatta.ok) {
     return null;
   }
@@ -98,6 +111,7 @@ async function cercaCartaTestuale(nomeCarta: string) {
   const rispostaSearch = await fetch(urlSearch, { headers: INTESTAZIONI });
   logDebug(`[DEBUG Scryfall] Tentativo search testuale per '${nomeCarta}': status =`, rispostaSearch.status);
 
+  verificaRispostaScryfall(rispostaSearch, `la ricerca testuale di "${nomeCarta}"`);
   if (!rispostaSearch.ok) {
     return null;
   }
@@ -149,6 +163,14 @@ function chiaveCache(nomeCarta: string): string {
   return nomeCarta.trim().toLocaleLowerCase();
 }
 
+// Tre esiti, non due: "non trovata" e "ricerca fallita" portano entrambi a nessun dato, ma solo il
+// primo è definitivo. Confonderli significherebbe memorizzare in cache l'esito di un guasto
+// temporaneo di rete, rendendo quella carta introvabile fino al riavvio del processo.
+type EsitoRicercaCarta =
+  | { stato: "trovata"; dati: DatiCarta }
+  | { stato: "non-trovata" }
+  | { stato: "errore" };
+
 export async function cercaDatiCarta(nomeCarta: string): Promise<DatiCarta | null> {
   const chiave = chiaveCache(nomeCarta);
   if (cacheCarte.has(chiave)) {
@@ -156,12 +178,19 @@ export async function cercaDatiCarta(nomeCarta: string): Promise<DatiCarta | nul
     return cacheCarte.get(chiave)!;
   }
 
-  const risultato = await cercaDatiCartaSuScryfall(nomeCarta);
-  cacheCarte.set(chiave, risultato);
-  return risultato;
+  const esito = await cercaDatiCartaSuScryfall(nomeCarta);
+
+  if (esito.stato === "errore") {
+    // Niente in cache: al prossimo turno si riprova, invece di trascinarsi dietro un guasto.
+    return null;
+  }
+
+  const dati = esito.stato === "trovata" ? esito.dati : null;
+  cacheCarte.set(chiave, dati);
+  return dati;
 }
 
-async function cercaDatiCartaSuScryfall(nomeCarta: string): Promise<DatiCarta | null> {
+async function cercaDatiCartaSuScryfall(nomeCarta: string): Promise<EsitoRicercaCarta> {
   logDebug("[DEBUG Scryfall] Cerco la carta:", nomeCarta);
 
   try {
@@ -179,7 +208,7 @@ async function cercaDatiCartaSuScryfall(nomeCarta: string): Promise<DatiCarta | 
 
     if (!carta) {
       logDebug("[DEBUG Scryfall] Nessuna strategia ha trovato la carta:", nomeCarta);
-      return null;
+      return { stato: "non-trovata" };
     }
 
     let testoOracle: string = carta.oracle_text || "";
@@ -195,6 +224,9 @@ async function cercaDatiCartaSuScryfall(nomeCarta: string): Promise<DatiCarta | 
       const rispostaRulings = await fetch(carta.rulings_uri, {
         headers: INTESTAZIONI,
       });
+      // Anche qui la distinzione conta: senza, un guasto momentaneo sui rulings farebbe memorizzare
+      // per sempre una carta con l'elenco dei rulings vuoto, che è peggio di riprovare più tardi.
+      verificaRispostaScryfall(rispostaRulings, `il recupero dei rulings di "${carta.name}"`);
       if (rispostaRulings.ok) {
         const datiRulings = await rispostaRulings.json();
         if (Array.isArray(datiRulings.data)) {
@@ -206,14 +238,17 @@ async function cercaDatiCartaSuScryfall(nomeCarta: string): Promise<DatiCarta | 
     }
 
     return {
-      nome: carta.name,
-      tipoLinea: carta.type_line || "",
-      testoOracle,
-      rulings,
-      legalita: formattaLegalita(carta.legalities),
+      stato: "trovata",
+      dati: {
+        nome: carta.name,
+        tipoLinea: carta.type_line || "",
+        testoOracle,
+        rulings,
+        legalita: formattaLegalita(carta.legalities),
+      },
     };
   } catch (errore) {
     console.error(`Errore imprevisto durante la ricerca Scryfall di "${nomeCarta}":`, errore);
-    return null;
+    return { stato: "errore" };
   }
 }
