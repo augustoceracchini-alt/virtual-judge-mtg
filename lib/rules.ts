@@ -89,6 +89,24 @@ function iniziaUnaParolaDi(testo: string, parolaChiave: string): boolean {
   return aSequenzaDiParole(testo).includes(aSequenzaDiParole(parolaChiave));
 }
 
+// Verifica se un blocco è uno di quelli il cui numero l'utente ha citato esplicitamente. I numeri
+// arrivano da Gemini (FASE A), che li restituisce quasi sempre nella forma chiesta dal prompt
+// ("510.1c") ma non è tenuto a farlo: un confronto grezzo con `startsWith` è case-sensitive e
+// sensibile agli spazi, quindi con "510.1C" o " 510.1c" la citazione andava persa proprio quando
+// l'utente aveva indicato la regola precisa da guardare.
+//
+// Il controllo sulla stringa vuota non è teorico: `"qualsiasi cosa".startsWith("")` è true, quindi
+// un solo elemento vuoto nell'array avrebbe reso "esplicitamente citato" OGNI blocco. Nell'MTR, dove
+// quella condizione decide l'ammissione, sarebbe finito l'intero regolamento torneistico nel prompt
+// di qualunque domanda, comprese quelle di pura meccanica di gioco.
+function bloccoCitaUnaDelleRegole(testoBlocco: string, regoleCitate: string[]): boolean {
+  const inizioBlocco = testoBlocco.trim().toLowerCase();
+  return regoleCitate.some((regola) => {
+    const cercata = regola.trim().toLowerCase();
+    return cercata !== "" && inizioBlocco.startsWith(cercata);
+  });
+}
+
 // Quanto testo di regolamento al massimo può finire nel prompt, per singola fonte.
 const LIMITE_CARATTERI = 9000;
 
@@ -130,7 +148,7 @@ export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]
 
     const argomentoPertinente =
       titolo !== "" && paroleChiaveNormalizzate.some((parola) => iniziaUnaParolaDi(titolo, parola));
-    const esplicitamenteCitato = regoleCitate.some((regola) => blocco.testo.startsWith(regola));
+    const esplicitamenteCitato = bloccoCitaUnaDelleRegole(blocco.testo, regoleCitate);
 
     let punteggio = 0;
     for (const parola of paroleChiaveNormalizzate) {
@@ -205,10 +223,8 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
         punteggio += 1;
       }
     }
-    for (const regola of regoleCitate) {
-      if (blocco.testo.startsWith(regola)) {
-        punteggio += 10;
-      }
+    if (bloccoCitaUnaDelleRegole(blocco.testo, regoleCitate)) {
+      punteggio += 10;
     }
     return punteggio;
   }
