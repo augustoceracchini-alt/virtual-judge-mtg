@@ -186,7 +186,18 @@ export async function POST(request: NextRequest) {
       keywords = Array.isArray(datiEstratti.keywords) ? datiEstratti.keywords : [];
       citedRules = Array.isArray(datiEstratti.cited_rules) ? datiEstratti.cited_rules : [];
       cardNames = Array.isArray(datiEstratti.card_names) ? datiEstratti.card_names : [];
-    } catch {
+    } catch (erroreEstrazione) {
+      // Senza questo log il fallimento è invisibile a chi gestisce il servizio, ed è tutt'altro che
+      // innocuo: con parole chiave e carte vuote la ricerca locale non restituisce nulla, e il
+      // prompt della FASE D passa al ramo "nessuna fonte disponibile", che fa rispondere il modello
+      // basandosi sulla propria memoria — esattamente ciò che questo progetto esiste per impedire.
+      // L'utente almeno viene avvisato da quel ramo del prompt; nei log invece non compariva niente.
+      console.error(
+        "FASE A: risposta di Gemini non interpretabile come JSON. Si procede senza parole chiave né nomi di carta, quindi senza fonti.",
+        erroreEstrazione,
+        "Testo ricevuto (primi 500 caratteri):",
+        testoEstrazione.slice(0, 500)
+      );
       keywords = [];
       citedRules = [];
       cardNames = [];
