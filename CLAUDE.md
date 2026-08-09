@@ -62,7 +62,21 @@ Per i casi noti, si aggiunge una voce a `data/errata-locali.json`:
 `carte` può elencare più nomi se la stessa nota vale per più carte. Il confronto è per nome esatto
 (case-insensitive, non parziale). La nota viene iniettata nel prompt con **priorità assoluta**,
 sopra anche le Comprehensive Rules — deve quindi affermare direttamente la conclusione corretta,
-non solo segnalare che il ruling vecchio è dubbio. Dopo aver aggiunto una voce, va anche eseguito
+non solo segnalare che il ruling vecchio è dubbio.
+
+**La nota deve enunciare la regola in modo coerente col testo CR che il modello riceve nello stesso
+prompt.** Avendo priorità assoluta, e ricevendo il modello l'istruzione di applicarla «senza
+ricalcolarla né metterla in discussione», una nota che contraddice le CR mette in conflitto due
+fonti dando la precedenza a quella sbagliata. Verificato dal vivo su Urza's Saga: la prima versione
+della nota diceva che il sacrificio scatta «SOLO se la Saga NON ha più nessuna abilità di capitolo»,
+cioè l'esatto rovescio della 714.4 (che richiede che la Saga ABBIA una o più abilità di capitolo).
+Il giudice arrivava sì alla conclusione giusta, ma prima sprecava un turno chiedendo all'utente
+*perché* la carta avesse perso le abilità — una distinzione che la 714.4 non fa — e poi insegnava
+all'utente la regola al contrario. Riscritta la nota in accordo con le CR, la risposta arriva
+diretta al primo turno e con la regola enunciata correttamente. Conviene anche dire esplicitamente
+nella nota quali domande NON porre, se una formulazione precedente ne ha indotta una inutile.
+
+Dopo aver aggiunto una voce, va anche eseguito
 di nuovo `npm run build` e verificato che `data/errata-locali.json` compaia nel file
 `.next/server/app/api/judge/route.js.nft.json`, altrimenti la correzione funziona in locale ma non
 in produzione.
