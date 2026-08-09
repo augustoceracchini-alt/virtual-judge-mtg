@@ -127,7 +127,6 @@ export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]
 
   const blocchiValutati = dati.blocchi.map((blocco) => {
     const titolo = titoloSottosezione(blocco.testo);
-    const testoNormalizzato = normalizza(blocco.testo);
 
     const argomentoPertinente =
       titolo !== "" && paroleChiaveNormalizzate.some((parola) => iniziaUnaParolaDi(titolo, parola));
@@ -135,7 +134,12 @@ export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]
 
     let punteggio = 0;
     for (const parola of paroleChiaveNormalizzate) {
-      if (testoNormalizzato.includes(parola)) {
+      // Confronto per parola anche nel corpo, non solo nel titolo: il corpo usava ancora una
+      // `includes` grezza, rimasta indietro rispetto alla correzione applicata alle CR. Qui non
+      // decide l'ammissione (quella dipende dal titolo o dalla citazione esplicita) ma decide
+      // l'ORDINE, e l'ordine conta: assemblaEstratti tronca a LIMITE_CARATTERI, quindi un blocco
+      // spinto in basso da punti falsi come "tap" dentro "untapped" può finire tagliato via.
+      if (iniziaUnaParolaDi(blocco.testo, parola)) {
         punteggio += 1;
       }
     }
