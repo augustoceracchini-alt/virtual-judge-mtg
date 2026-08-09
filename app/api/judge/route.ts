@@ -319,6 +319,7 @@ export async function POST(request: NextRequest) {
         estrattiRegole,
         estrattiRegoleTorneo,
         sezioneCarte,
+        testoCronologia,
         domanda,
         risposta,
       });

@@ -138,6 +138,7 @@ interface InputPromptVerifica {
   estrattiRegole: string;
   estrattiRegoleTorneo: string;
   sezioneCarte: string;
+  testoCronologia: string;
   domanda: string;
   risposta: string;
 }
@@ -154,6 +155,23 @@ ${input.estrattiRegoleTorneo}
 --- FINE MAGIC TOURNAMENT RULES ---
 
 Sulle procedure e policy di torneo (deck check, sideboard, gestione del tempo, comunicazione, tiebreaker, penalità, legalità dei formati e costruzione del mazzo) è il Magic Tournament Rules ad avere la precedenza sulle Comprehensive Rules: se la domanda riguarda una di queste materie, fonda la tua conclusione su di esso.
+
+`
+      : "";
+
+  // Il revisore deve vedere anche la conversazione, non solo l'ultimo messaggio. In una chat
+  // multi-turno il messaggio finale può non contenere quasi nulla dello stato di gioco (un turno
+  // reale era "Riguardo a <domanda>: Per effetto di Blood Moon", che da solo non nomina né le carte
+  // in gioco né i segnalini): senza cronologia il revisore ricalcolerebbe il verdetto su uno stato
+  // incompleto e potrebbe sovrascrivere con una conclusione peggiore quella corretta della FASE D,
+  // che la cronologia invece ce l'aveva.
+  const sezioneCronologiaVerifica =
+    input.testoCronologia !== ""
+      ? `--- CRONOLOGIA DELLA CONVERSAZIONE FINORA ---
+${input.testoCronologia}
+--- FINE CRONOLOGIA ---
+
+Lo stato di gioco da valutare è quello che risulta dalla cronologia qui sopra PIÙ il messaggio finale qui sotto: il messaggio finale, da solo, può non ripetere elementi già stabiliti nei turni precedenti (carte in gioco, segnalini, chi ha la priorità). Ricostruisci lo stato completo prima di calcolare.
 
 `
       : "";
@@ -176,7 +194,7 @@ ${sezioneErrataVerifica}PASSO 1 — Calcolo indipendente, usando SOLO i regolame
 ${input.estrattiRegole !== "" ? input.estrattiRegole : "(nessun estratto di CR disponibile per questa domanda)"}
 --- FINE COMPREHENSIVE RULES ---
 
-${sezioneRegoleTorneoVerifica}Domanda dell'utente (lo stato di gioco da cui partire): ${input.domanda}
+${sezioneRegoleTorneoVerifica}${sezioneCronologiaVerifica}Messaggio finale dell'utente: ${input.domanda}
 
 Se i regolamenti sopra contengono una regola condizionale a più clausole (es. un'azione basata sullo stato con un confronto numerico, o più condizioni collegate da "e"/"and"), scomponi OGNI condizione richiesta come una riga separata "Condizione: <testo> → SÌ/NO, perché <motivo>", calcolando tu stesso da zero se è soddisfatta nello stato di gioco descritto — controlla con particolare attenzione l'aritmetica di eventuali confronti numerici, cifra per cifra. Scrivi poi una conclusione provvisoria (la conseguenza scatta o non scatta) basata SOLO su questo calcolo.
 
@@ -192,5 +210,5 @@ ${input.risposta}
 
 Se la conclusione finale del verdetto coincide con la tua, restituisci il verdetto originale ESATTAMENTE IDENTICO, senza modificarlo nemmeno di una virgola. Se invece il verdetto contraddice la tua conclusione (es. applica un ruling più vecchio nonostante la regola generale più recente indichi il contrario, oppure contiene un errore aritmetico o logico), riscrivi un verdetto corretto in italiano, con lo stesso stile e formato di quello originale, ma con la conclusione del tuo Passo 1/2.
 
-Restituisci SOLO il testo finale del verdetto (originale o corretto) da mostrare all'utente. I marcatori "--- CORREZIONI MANUALI A RULINGS SUPERATI ---", "--- COMPREHENSIVE RULES ---", "--- MAGIC TOURNAMENT RULES ---", "--- VERDETTO DA VERIFICARE ---", "PASSO 1", "PASSO 2", "PASSO 3" e simili sono SOLO struttura interna di QUESTO messaggio, per aiutarti a seguire l'ordine dei passi: non fanno parte del testo del verdetto e non devono MAI apparire nella tua risposta, nemmeno in parte o riformulati. Non mostrare i tuoi passi 1, 2, 3, non spiegare il tuo processo di revisione: la tua risposta deve iniziare direttamente con la prima frase del verdetto stesso, come se il verdetto originale non fosse mai stato preceduto da nessuna etichetta o intestazione.`;
+Restituisci SOLO il testo finale del verdetto (originale o corretto) da mostrare all'utente. I marcatori "--- CORREZIONI MANUALI A RULINGS SUPERATI ---", "--- COMPREHENSIVE RULES ---", "--- MAGIC TOURNAMENT RULES ---", "--- CRONOLOGIA DELLA CONVERSAZIONE FINORA ---", "--- VERDETTO DA VERIFICARE ---", "PASSO 1", "PASSO 2", "PASSO 3" e simili sono SOLO struttura interna di QUESTO messaggio, per aiutarti a seguire l'ordine dei passi: non fanno parte del testo del verdetto e non devono MAI apparire nella tua risposta, nemmeno in parte o riformulati. Non mostrare i tuoi passi 1, 2, 3, non spiegare il tuo processo di revisione: la tua risposta deve iniziare direttamente con la prima frase del verdetto stesso, come se il verdetto originale non fosse mai stato preceduto da nessuna etichetta o intestazione.`;
 }
