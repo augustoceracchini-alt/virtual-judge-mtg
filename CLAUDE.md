@@ -19,7 +19,9 @@ Chi sviluppa (Augusto) non sa programmare. Ogni istruzione data va accompagnata 
 - `node scripts/prepara-regole-torneo.mjs` — da lanciare ogni volta che `data/tournament-rules.pdf` viene aggiornato, per rigenerare `data/mtr-compatte.json`
 - `npm run prova-ricerca` — banco di prova della ricerca locale nei regolamenti: importa le funzioni reali di `lib/rules.ts` e verifica su casi fissi che i blocchi decisivi vengano recuperati, senza chiamare Gemini (gratuito, istantaneo, deterministico); usarlo per capire se una modifica a `lib/rules.ts` migliora o peggiora il recupero, invece di indovinarlo
 
-Non esiste una suite di test automatici end-to-end. Il metodo di verifica standard del progetto è: avviare `npm run dev`, poi testare l'endpoint con `Invoke-RestMethod` da PowerShell (vedi "Note di stile" sotto) e/o dal browser; per la sola ricerca nei regolamenti c'è anche `npm run prova-ricerca` (vedi sopra).
+- `npm run prova-copertura` — sonda di misura (non un test): interroga l'API di Board Games Stack Exchange e riporta, per una lista di casi, se esiste una discussione pertinente, quanti voti ha, quando è stata modificata e quali numeri di regola CR cita. Non chiama Gemini e non tocca l'app; consuma la quota gratuita dell'API (300 richieste/giorno senza chiave, una per caso)
+
+Non esiste una suite di test automatici end-to-end. Il metodo di verifica standard del progetto è: avviare `npm run dev`, poi testare l'endpoint con `Invoke-RestMethod` da PowerShell (vedi "Note di stile" sotto) e/o dal browser; per la sola ricerca nei regolamenti c'è `npm run prova-ricerca`, e per il comportamento end-to-end lo scenario descritto in "Banco di prova manuale" più sotto.
 
 ## Stack tecnologico
 - Next.js 16.2.12 (App Router), TypeScript, Tailwind CSS
@@ -35,13 +37,21 @@ Non esiste una suite di test automatici end-to-end. Il metodo di verifica standa
 - `app/api/judge/route.ts` — endpoint principale (`POST`), orchestratore di tutta la logica: estrazione parole chiave/carte, ricerca regole, ricerca Scryfall, costruzione del prompt finale e chiamata a Gemini (anche multimodale, se è allegata un'immagine)
 - `lib/rules.ts` — ricerca in entrambi i regolamenti, con due strategie diverse perché i due documenti hanno strutture opposte (vedi "Decisioni architetturali"): `cercaRegolePertinenti()` per le CR (a due fasi: macro capitolo poi micro blocco) e `cercaRegoleTorneo()` per l'MTR (per titolo di sottosezione)
 - `lib/errata.ts` — `cercaErrataPertinenti()`, corrispondenza per nome esatto (case-insensitive) contro `data/errata-locali.json`; vedi "Correzioni manuali" più sotto
-- `lib/scryfall.ts` — interrogazione API Scryfall per Oracle Text, Rulings e legalità nei formati principali, con cascata di ricerca fuzzy → autocomplete → ricerca testuale (quest'ultima con verifica di somiglianza del nome, per evitare di accettare una carta sbagliata)
+- `lib/scryfall.ts` — interrogazione API Scryfall per riga del tipo, Oracle Text, Rulings e legalità nei formati principali, con cascata di ricerca fuzzy → autocomplete → ricerca testuale (quest'ultima con verifica di somiglianza del nome, per evitare di accettare una carta sbagliata) e cache in memoria del processo
+- `lib/prompts.ts` — testo dei tre prompt inviati a Gemini (FASI A, D, E). Assembla soltanto, non decide nulla: le fasi e il loro ordine stanno in `route.ts`. Il testo è il risultato di molte iterazioni, va modificato con prudenza
+- `lib/debug.ts` — `DEBUG_ATTIVO` e `logDebug` condivisi da `route.ts` e `lib/scryfall.ts`
+- `lib/limite.ts` — `richiestaConsentita(ip)`, limite di richieste per IP in memoria del processo
+- `lib/discussioni.ts` — ricerca nelle discussioni di Board Games Stack Exchange. **NON è collegato a `route.ts`**: esiste solo per la sonda `prova-copertura` (vedi "Discussioni della community" più sotto per la decisione presa e il perché)
+- `app/components/` — `AllegatoFoto.tsx`, `BollaMessaggio.tsx`, `IntestazioneChat.tsx`: componenti presentazionali estratti da `page.tsx`
+- `app/tipi.ts` — tipi condivisi fra pagina e componenti
 - `data/comprehensive-rules.txt` — testo grezzo ufficiale scaricato da media.wizards.com
 - `data/tournament-rules.pdf` — PDF ufficiale del Magic Tournament Rules scaricato da media.wizards.com
 - `data/regole-compatte.json` e `data/mtr-compatte.json` — versioni pre-elaborate (`{dataEfficacia, capitoli, blocchi}`) generate dai due script; **entrambe vanno committate** perché sono i file letti a runtime, e **dichiarate in `next.config.ts` sotto `outputFileTracingIncludes`**, altrimenti Vercel non le include nel pacchetto e in produzione la ricerca falla pur funzionando in locale
 - `data/errata-locali.json` — lista di correzioni manuali scritte a mano (non generata da uno script); anche questa va committata e dichiarata in `next.config.ts`, stessa regola degli altri due file dati
 - `scripts/prepara-regole.mjs` — script Node (ESM) che rigenera `regole-compatte.json` da `comprehensive-rules.txt`
 - `scripts/prepara-regole-torneo.mjs` — script Node (ESM) che rigenera `mtr-compatte.json` da `tournament-rules.pdf` (usa `pdf-parse`, dipendenza di sviluppo: non finisce nel bundle di produzione)
+- `scripts/prova-ricerca.mjs` e `scripts/prova-copertura.mjs` — banco di prova della ricerca e sonda delle discussioni (vedi "Comandi principali"). Importano i moduli reali di `lib/` sfruttando lo type stripping nativo di Node, quindi misurano il codice che va in produzione e non una copia della sua logica. Per questo i moduli che devono restare importabili da qui **non usano l'alias `@/`**, che Node non risolve
+- `scripts/genera-icone-pwa.mjs` — genera le icone e gli screenshot PWA in `public/` (usa `sharp`, va lanciato solo se le icone cambiano)
 
 ## Correzioni manuali a rulings superati (`data/errata-locali.json`)
 
@@ -76,6 +86,14 @@ all'utente la regola al contrario. Riscritta la nota in accordo con le CR, la ri
 diretta al primo turno e con la regola enunciata correttamente. Conviene anche dire esplicitamente
 nella nota quali domande NON porre, se una formulazione precedente ne ha indotta una inutile.
 
+**Regola generale che vale oltre le errata: un dato recuperato da una fonte ufficiale va MOSTRATO al
+modello, non solo usato internamente.** La riga del tipo delle carte veniva recuperata da Scryfall e
+usata soltanto per arricchire le parole chiave della ricerca, poi scartata: nel prompt non compariva.
+Il modello, privo di una fonte per tipi e supertipi, li deduceva dall'Oracle Text — e in una prova ha
+attribuito a Urza's Saga il supertipo "Legendary", che non ha, citando come fonte "i ruling di Blood
+Moon". La parola "legendary" era nel prompt solo perché compare come esempio generico dentro il testo
+della regola 305.7. Se un dato serve al ragionamento, va nel prompt con la sua etichetta.
+
 Dopo aver aggiunto una voce, va anche eseguito
 di nuovo `npm run build` e verificato che `data/errata-locali.json` compaia nel file
 `.next/server/app/api/judge/route.js.nft.json`, altrimenti la correzione funziona in locale ma non
@@ -88,19 +106,21 @@ in produzione.
 Perché non mandiamo l'intero regolamento a Gemini ogni volta: consumerebbe troppa quota gratuita. Invece:
 1. Una prima mini-chiamata a Gemini (FASE A) estrae parole chiave inglesi + numeri di regola citati + nomi di carte, analizzando il messaggio corrente **insieme a tutta la cronologia della conversazione fin qui** (non solo l'ultimo messaggio, altrimenti una carta già identificata in un turno precedente "sparisce" se il turno successivo non la rinomina esplicitamente).
 2. `cercaRegolePertinenti()` in `lib/rules.ts` cerca localmente (gratis, zero token) i blocchi di regole più pertinenti, prima per capitolo (macro) poi per singolo blocco (micro).
-3. Se ci sono nomi di carte, `cercaDatiCarta()` in `lib/scryfall.ts` interroga Scryfall per Oracle Text + Rulings + legalità (massimo 6 carte per richiesta, **una dopo l'altra e non in parallelo**: ogni carta è una catena di più chiamate che al proprio interno già rispetta una pausa, e lanciarne sei insieme superava di molto il ritmo richiesto dall'API pubblica di Scryfall).
+3. Se ci sono nomi di carte, `cercaDatiCarta()` in `lib/scryfall.ts` interroga Scryfall per riga del tipo + Oracle Text + Rulings + legalità (massimo 6 carte per richiesta, **una dopo l'altra e non in parallelo**: ogni carta è una catena di più chiamate che al proprio interno già rispetta una pausa, e lanciarne sei insieme superava di molto il ritmo richiesto dall'API pubblica di Scryfall).
 4. Una seconda chiamata a Gemini (FASE D) genera il verdetto finale, con SOLO gli estratti reali trovati come contesto, istruito a citare esclusivamente quei numeri di regola — mai a memoria. Se è allegata una foto, questa chiamata è multimodale (l'immagine viene passata insieme al prompt testuale).
-5. Se gli estratti contengono una regola condizionale a più clausole, una terza chiamata (FASE E) ricontrolla la conclusione in modo isolato, con un procedimento a tre passi: prima ricalcola dai soli regolamenti, poi guarda i rulling delle carte, infine confronta col verdetto già scritto e lo corregge solo se contraddice il proprio calcolo.
+5. Se gli estratti contengono una regola condizionale a più clausole, una terza chiamata (FASE E) ricontrolla la conclusione in modo isolato, con un procedimento a tre passi: prima ricalcola dai soli regolamenti, poi guarda i rulings delle carte, infine confronta col verdetto già scritto e lo corregge solo se contraddice il proprio calcolo.
 
 Gerarchia delle fonti nel prompt (attenzione: è stata **invertita** rispetto alla versione iniziale del progetto): le Comprehensive Rules sono la fonte primaria per le meccaniche di gioco, perché vengono aggiornate a mano a ogni pubblicazione di Wizards e quindi riflettono il funzionamento attuale, mentre un ruling di carta resta fermo alla data in cui è stato scritto. Sulle procedure di torneo prevale l'MTR, come dichiara il documento stesso nella propria introduzione. Il testo Oracle resta la fonte per sapere cosa fa la carta, e i rulings servono per le interazioni specifiche — ma se un ruling è anteriore alla data di validità delle CR fornite e le contraddice, prevalgono le CR. Il caso che ha motivato questa inversione: un ruling del 2021 su Urza's Saga è stato superato dalla modifica della regola 714.4 del 2025, e il giudice continuava ad applicare il ruling vecchio.
 
 Ricerca nei due regolamenti — perché due strategie diverse: le CR hanno 3869 blocchi brevi su 146 capitoli dai titoli specifici ("Sagas", "Lands"), quindi selezionare prima i capitoli pertinenti e poi i blocchi dentro ciascuno evita che un capitolo prolisso soffochi quello decisivo. L'MTR ha invece 94 blocchi lunghi su appena 16 capitoli dai titoli quasi identici (la parola "Tournament" compare in cinque titoli su sedici): lì la selezione per capitolo produce pareggi e scarta il capitolo giusto, quindi si usa il titolo della sottosezione con cui ogni blocco inizia ("5.2 Bribery: ...", "2.8 Deck Checks: ..."). Quel titolo fa anche da filtro di pertinenza: se nessuna sottosezione tocca la domanda, l'MTR non viene incluso affatto, così non inquina le domande di pura meccanica di gioco. **Non riusare la ricerca delle CR per l'MTR**: è già stato provato e produceva risposte sbagliate.
 
+Attenzione però a non fidarsi troppo dei titoli dei capitoli CR: sono specifici, ma spesso non contengono il vocabolario della domanda (il capitolo 714 si intitola "Saga Cards" e non contiene "lore counter"; il 702 è "Keyword Abilities" e non contiene "deathtouch"). Per questo la selezione per capitolo è accompagnata da una ricerca globale **sempre attiva** come rete di sicurezza, e dal confronto sulla parola-testa della locuzione. Prima di toccare `lib/rules.ts`, lanciare `npm run prova-ricerca`: quei meccanismi esistono tutti per casi misurati, non per prudenza astratta.
+
 Controllo di ambiguità: il prompt istruisce il modello a fare SOLO le domande la cui risposta cambierebbe davvero il verdetto (non a chiedere qualunque dettaglio mancante), assumendo lo scenario standard/più comune per il resto e dichiarandolo nel verdetto. Se restano domande davvero dirimenti, al massimo 2-3 per turno, tutte insieme, mai una alla volta — la risposta deve iniziare ESATTAMENTE con "⚠️ Ho bisogno di alcuni chiarimenti prima di poter rispondere correttamente:".
 
 Pulsanti di risposta rapida ai chiarimenti: quando il giudice chiede chiarimenti, il prompt gli impone di aggiungere in coda alla risposta un blocco delimitato da `===OPZIONI_CHIARIMENTO===` / `===FINE_OPZIONI===` contenente un JSON con, per ogni domanda posta, un elenco di 2-4 possibili risposte brevi (o un array vuoto se la domanda è aperta). `app/page.tsx` estrae questo blocco, lo rimuove dal testo mostrato all'utente, e mostra un pulsante per ogni opzione: cliccarlo inserisce (non invia) il testo `Riguardo a "<domanda>": <opzione>` nel campo di testo, così l'utente può cliccare più risposte e poi inviarle insieme.
 
-Conversazione multi-turno: `app/page.tsx` mantiene uno stato `cronologia` (`{ruolo: "utente"|"giudice", testo}[]`) e lo invia ad ogni richiesta insieme al nuovo messaggio; `route.ts` lo usa sia in FASE A (per non perdere carte/regole già citate) sia in FASE D (per dare un verdetto coerente con quanto già detto, specialmente se l'utente ha appena risposto a una richiesta di chiarimento).
+Conversazione multi-turno: `app/page.tsx` mantiene uno stato `cronologia` (`{ruolo: "utente"|"giudice", testo}[]`) e lo invia ad ogni richiesta insieme al nuovo messaggio; `route.ts` la usa in tutte e tre le fasi che parlano con Gemini: in FASE A (per non perdere carte/regole già citate), in FASE D (per dare un verdetto coerente con quanto già detto, specialmente se l'utente ha appena risposto a una richiesta di chiarimento) e in FASE E (perché il revisore ricalcola il verdetto da zero, e l'ultimo messaggio da solo può non contenere lo stato di gioco).
 
 Il sistema non si presenta MAI come giudice certificato/L2 — è un requisito esplicito del progetto (accuratezza verso l'utente): il prompt dice chiaramente al modello di non rivendicare certificazioni Wizards/DCI che non possiede.
 
@@ -143,9 +163,65 @@ Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge
 - Refactor completati: testi dei prompt estratti in `lib/prompts.ts`, `app/page.tsx` spezzata in componenti (`app/components/AllegatoFoto.tsx`, `BollaMessaggio.tsx`, `IntestazioneChat.tsx`)
 - Cache in memoria per le ricerche Scryfall (`lib/scryfall.ts`) — evita di rifare le stesse chiamate di rete per carte già cercate, condivisa da tutte le richieste sulla stessa istanza calda del processo
 - Affidabilità sulle regole condizionali — decisione presa: FASE E (il doppio controllo sulle regole a più clausole) usa `gemini-3.6-flash` invece di `gemini-3.5-flash-lite`, con fallback al verdetto FASE D non verificato se la quota stretta di quel modello si esaurisce (vedi "Modelli Gemini" sopra). Ulteriori istruzioni nel prompt avevano già mostrato rendimenti decrescenti prima di questa decisione. Effetto reale non misurato con un banco di prova (a differenza del recupero regole)
+- La FASE E riceve anche la **cronologia**, non solo l'ultimo messaggio: in una chat multi-turno quel messaggio può non contenere quasi nulla dello stato di gioco (un turno reale era «Riguardo a <domanda>: Per effetto di Blood Moon»), e il revisore ricalcolava su uno stato incompleto potendo sovrascrivere un verdetto corretto
+- La **riga del tipo** delle carte viene mostrata al modello, non solo usata per la ricerca (vedi la regola generale in "Correzioni manuali" sopra)
+- Il fallimento del parse JSON della FASE A finisce in `console.error`: prima era un `catch` nudo, e una risposta a memoria senza fonti non lasciava traccia nei log. **Il comportamento non è cambiato**: la richiesta prosegue senza fonti, resta da decidere se debba invece fallire
+- La cache Scryfall distingue «carta inesistente» (404, memorizzato) da «ricerca fallita» (429/5xx o eccezione, non memorizzato): prima un guasto momentaneo rendeva quella carta introvabile per tutta la vita del processo
+- Il confronto sui numeri di regola citati è normalizzato (`trim` + minuscole) e ignora le stringhe vuote: `"qualsiasi cosa".startsWith("")` è true, e un elemento vuoto avrebbe fatto includere l'intero MTR in ogni domanda
+- La selezione dei capitoli CR confronta anche la **parola-testa** della locuzione ("triggered *ability*" trova il capitolo "Abilities"), tollerando il plurale in `-ies` che il confronto per prefisso non copre. Costo misurato: il testo CR nel prompt cresce di circa il 22%
+
+## Prestazioni misurate in produzione
+
+Tre richieste identiche di fila all'endpoint deployato, stessa domanda:
+
+| Richiesta | Tempo |
+|---|---|
+| 1ª (istanza fredda) | 54,3 s |
+| 2ª | 10,0 s |
+| 3ª | 9,7 s |
+
+Conclusioni: **il cold start domina**, con circa 44 secondi di scarto, e lo **stato caldo è ~10 s**,
+imputabile alle 2-3 chiamate Gemini sequenziali. La causa dei 44 secondi NON è stata identificata: i
+file dati sono stati esclusi (1,2 MB si analizzano in millisecondi), servirebbero i log di Vercel o
+una strumentazione nel codice.
+
+Il **timeout della funzione su Vercel non è un problema**: la richiesta da 54,3 s è andata a buon
+fine, quindi il limite è ben oltre il minuto. Non serve controllare la dashboard per questo.
+
+## Discussioni della community (decisione presa: non integrare)
+
+`lib/discussioni.ts` interroga Board Games Stack Exchange e **non è collegato all'app** di proposito.
+La sonda `prova-copertura` ha misurato che su sei casi tutti trovano una discussione che cita numeri
+di regola CR, ma solo circa metà risponde alla domanda *esatta*: le altre sono pertinenti
+all'argomento e non alla domanda, e infilare nel prompt testo vicino-ma-diverso è proprio il difetto
+che il progetto combatte. Inoltre nessuna delle risposte trovate era stata aggiornata dopo l'ultimo
+aggiornamento delle CR locali.
+
+Soprattutto: sull'unico caso reale in cui una ricerca su Google aveva battuto il giudice, la causa
+era **una nostra nota errata scritta male**, non la mancanza di fonti — e la regola decisiva era già
+nel prompt. Aggiungere una fonte non ufficiale per un problema che non abbiamo osservato sarebbe
+rischio senza beneficio dimostrato. La sonda resta utile come **strumento diagnostico**: è
+confrontando la spiegazione della community con la nostra che l'errore è emerso.
+
+## Banco di prova manuale (scenario benchmark a 3 turni)
+
+Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug che né `tsc` né
+`prova-ricerca` possono vedere (nella sua ultima esecuzione ne ha trovati due).
+
+1. «Ho Urza's Saga in gioco al secondo capitolo e il mio avversario lancia Blood Moon. Cosa succede?»
+   → non viene sacrificata (714.4 richiede che ABBIA abilità di capitolo); le abilità già concesse
+   dai capitoli I e II sopravvivono (305.7 non rimuove le abilità concesse da altri effetti); non
+   riceve più segnalini lore (714.2d e 714.3b).
+2. Con Karn, Scion of Urza e Wurmcoil Engine **in mano**: si può ancora creare il token Construct?
+   → sì, ed è **1/1**, perché conta solo se stesso (le carte in mano non sono permanenti, Karn non è
+   un artefatto, e Urza's Saga è Incantesimo Terra).
+3. Se l'avversario avesse aspettato il terzo capitolo? → sì, il tutor si risolve comunque:
+   un'abilità sulla pila esiste indipendentemente dalla propria fonte (113.7a).
 
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
-- Ottimizzazione velocità — ogni domanda fa 2 chiamate Gemini sequenziali (3 se scatta la FASE E), percepite come lente; soluzione ibrida proposta (dizionario locale IT-EN in `lib/dizionario.ts`, fallback a Gemini solo se il dizionario non basta) — **non ancora applicata**, il file non esiste; rimandata finché non si misura se serve davvero, dato che il recupero delle regole è arrivato a 8/8 nel banco di prova senza glossario
+- Ottimizzazione velocità — ora misurata (vedi "Prestazioni"): ~10 s a caldo, ~54 s a freddo. I due fronti sono distinti e vanno affrontati separatamente. **A caldo** pesano le 2-3 chiamate Gemini sequenziali: la soluzione proposta è un dizionario locale IT-EN in `lib/dizionario.ts` per saltare la FASE A quando basta — **non applicata**, il file non esiste, e toglierebbe al massimo una delle tre chiamate. **A freddo** la causa dei 44 s di scarto non è nota e i file dati sono già stati esclusi: primo passo sarebbe strumentare i tempi per fase, oppure leggere i log di Vercel
+- Decisione di prodotto da prendere: se il parse JSON della FASE A fallisce, oggi il giudice risponde senza fonti avvisando l'utente. L'alternativa è restituire un errore. Il log c'è già, la decisione no
+- Semplificazioni individuate e non applicate: eliminare `normalizza()` in `lib/rules.ts` (è solo `toLowerCase()`, e `iniziaUnaParolaDi` normalizza già al proprio interno), estrarre il parsing della FASE A e la validazione dell'immagine da `route.ts` in funzioni dedicate, togliere le tre riassegnazioni morte nel `catch` della FASE A (le variabili sono già inizializzate e da `JSON.parse` non esiste un percorso di assegnazione parziale)
 - Le note di lavoro personali (fra cui `REVISIONE.md`) sono in `note-di-lavoro/`, cartella esclusa da git
 
 ## Note di stile per chi genera codice su questo progetto
