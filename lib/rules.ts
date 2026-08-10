@@ -89,6 +89,45 @@ function iniziaUnaParolaDi(testo: string, parolaChiave: string): boolean {
   return aSequenzaDiParole(testo).includes(aSequenzaDiParole(parolaChiave));
 }
 
+// Confronto pensato per i TITOLI DEI CAPITOLI, che sono di una o due parole ("Abilities", "Lands",
+// "Saga Cards"), mentre le parole chiave della FASE A sono spesso locuzioni ("triggered ability",
+// "continuous effect"). Confrontare la locuzione intera contro un titolo di una parola sola non può
+// riuscire: "triggered ability" non comparirà mai dentro "Abilities". Per i titoli si confronta
+// quindi anche la sola parola-testa della locuzione (vedi il commento nella funzione).
+//
+// Si tollera inoltre il plurale in -ies, che il confronto per prefisso non copre: "ability" non è
+// prefisso di "abilities" (abilit-y contro abilit-ies), mentre per i plurali regolari il prefisso
+// basta già ("deck check" trova "Deck Checks").
+//
+// Misurato: senza questo, per una domanda su un'abilità di capitolo sulla pila il capitolo 113
+// "Abilities" non veniva mai selezionato, e la regola decisiva 113.7a restava al rango 47 su 721
+// blocchi con punteggio, fuori portata della rete di sicurezza globale che ne prende 3.
+const LUNGHEZZA_MINIMA_PAROLA_SINGOLA = 4;
+
+function conVariantePlurale(parola: string): string[] {
+  if (parola.endsWith("y")) {
+    return [parola, `${parola.slice(0, -1)}ies`];
+  }
+  return [parola];
+}
+
+function titoloCapitoloPertinente(titolo: string, parolaChiave: string): boolean {
+  // Della locuzione si prova solo l'ULTIMA parola, non tutte: in inglese è la testa del sostantivo
+  // composto, quella che dice di che cosa si parla ("triggered ABILITY", "continuous EFFECT",
+  // "lore COUNTER"). Provarle tutte allargava troppo la selezione: misurato, portava il testo dei
+  // casi di prova a sbattere contro LIMITE_CARATTERI, dove ogni blocco in più ne fa troncare un
+  // altro.
+  const parole = parolaChiave.split(/\s+/);
+  const ultima = parole[parole.length - 1];
+  const termini =
+    parole.length > 1 && ultima.length >= LUNGHEZZA_MINIMA_PAROLA_SINGOLA
+      ? [parolaChiave, ultima]
+      : [parolaChiave];
+  return termini.some((termine) =>
+    conVariantePlurale(termine).some((variante) => iniziaUnaParolaDi(titolo, variante))
+  );
+}
+
 // Verifica se un blocco è uno di quelli il cui numero l'utente ha citato esplicitamente. I numeri
 // arrivano da Gemini (FASE A), che li restituisce quasi sempre nella forma chiesta dal prompt
 // ("510.1c") ma non è tenuto a farlo: un confronto grezzo con `startsWith` è case-sensitive e
@@ -188,7 +227,7 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   const punteggiCapitoli = dati.capitoli.map((capitolo) => {
     let punteggio = 0;
     for (const parola of paroleChiaveNormalizzate) {
-      if (iniziaUnaParolaDi(capitolo.titolo, parola)) {
+      if (titoloCapitoloPertinente(capitolo.titolo, parola)) {
         punteggio += 1;
       }
     }

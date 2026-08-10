@@ -77,6 +77,34 @@ const CASI = [
     statoIniziale: "PASSA",
   },
   {
+    // Emerso dallo scenario benchmark a 3 turni: alla domanda se l'abilità del capitolo III si
+    // risolva comunque quando Blood Moon arriva mentre è già sulla pila, il giudice ha dato la
+    // risposta giusta ma appoggiandosi a un "principio generale della gestione della pila",
+    // cioè alla propria memoria, perché la regola che lo dice non era fra gli estratti.
+    // Le parole chiave sono quelle REALI prodotte dalla FASE A in quel turno, copiate dal log: con
+    // parole scelte a mano il caso passava, perché bastava aggiungere "source" per far salire la
+    // 113.7a nella rete di sicurezza globale. Misurato: con queste parole la 113.7a è al rango 47
+    // su 721 blocchi con punteggio, e la rete globale ne prende 3.
+    nome: "Abilità sulla pila indipendente dalla fonte",
+    fonte: "CR",
+    paroleChiave: [
+      "chapter ability",
+      "triggered ability",
+      "stack",
+      "state-based actions",
+      "resolution",
+      "continuous effect",
+      "Enchantment",
+      "Land",
+      "Urza",
+      "Saga",
+    ],
+    regoleCitate: [],
+    attesi: ["113.7a"],
+    nonVoluti: [],
+    statoIniziale: "FALLISCE",
+  },
+  {
     nome: "Corruzione in torneo",
     fonte: "MTR",
     paroleChiave: ["bribery", "wagering", "prize"],
