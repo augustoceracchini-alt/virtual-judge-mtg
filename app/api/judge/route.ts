@@ -277,7 +277,15 @@ export async function POST(request: NextRequest) {
               ? carta.rulings.slice(0, 8).join("\n")
               : "Nessun ruling ufficiale disponibile per questa carta.";
           const legalitaTesto = carta.legalita !== "" ? carta.legalita : "Dati di legalità non disponibili.";
-          return `Carta: ${carta.nome}\nTesto Oracle aggiornato: ${carta.testoOracle}\nLegalità nei formati principali: ${legalitaTesto}\nRulings ufficiali:\n${rulingsTesto}`;
+          // La riga del tipo va MOSTRATA al modello, non solo usata per arricchire le parole chiave
+          // della ricerca (vedi paroleTipoLinea più sotto): senza di essa il modello non ha nessuna
+          // fonte per i tipi, i supertipi e i sottotipi della carta, e finisce per dedurli dal testo
+          // Oracle. In una prova reale ha attribuito a Urza's Saga il supertipo "Legendary", che non
+          // ha, citando come fonte "i ruling di Blood Moon": un'invenzione con tanto di attribuzione
+          // falsa. La parola "legendary" era nel prompt solo perché compare come esempio generico
+          // dentro il testo della regola 305.7.
+          const tipoTesto = carta.tipoLinea !== "" ? carta.tipoLinea : "Riga del tipo non disponibile.";
+          return `Carta: ${carta.nome}\nTipo di carta (riga del tipo ufficiale): ${tipoTesto}\nTesto Oracle aggiornato: ${carta.testoOracle}\nLegalità nei formati principali: ${legalitaTesto}\nRulings ufficiali:\n${rulingsTesto}`;
         })
         .join("\n\n---\n\n");
     }
