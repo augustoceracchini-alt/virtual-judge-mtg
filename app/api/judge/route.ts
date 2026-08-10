@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 import {
   cercaRegolePertinenti,
@@ -99,6 +99,74 @@ function ipClient(request: NextRequest): string {
   return forwarded ? forwarded.split(",")[0].trim() : "ip-sconosciuto";
 }
 
+// Restituisce il messaggio di errore da mostrare all'utente se l'immagine allegata non è valida,
+// oppure null se non c'è niente da segnalare (immagine assente o valida). Nessuna immagine non è
+// un errore: l'allegato è opzionale.
+function erroreValidazioneImmagine(immagineBase64: unknown, mimeTypeImmagine: unknown): string | null {
+  if (!immagineBase64) {
+    return null;
+  }
+
+  const mimeTipiConsentiti = ["image/png", "image/jpeg", "image/webp"];
+  if (!mimeTipiConsentiti.includes(mimeTypeImmagine as string)) {
+    return "Formato immagine non supportato. Usa PNG, JPEG o WEBP.";
+  }
+
+  // Una stringa base64 di lunghezza L rappresenta circa L*0.75 byte di dati originali,
+  // quindi ~10.6 milioni di caratteri base64 corrispondono a circa 8MB di immagine.
+  const LUNGHEZZA_MASSIMA_BASE64 = 10600000;
+  const lunghezzaBase64 = typeof immagineBase64 === "string" ? immagineBase64.length : 0;
+  if (lunghezzaBase64 > LUNGHEZZA_MASSIMA_BASE64) {
+    return "Immagine troppo grande (massimo 8MB).";
+  }
+
+  return null;
+}
+
+type RisultatoEstrazioneFaseA = {
+  keywords: string[];
+  citedRules: string[];
+  cardNames: string[];
+};
+
+// FASE A: estrae parole chiave, numeri di regola e nomi di carte citati in tutta la conversazione
+// finora. Se la risposta di Gemini non è JSON valido, restituisce liste vuote invece di propagare
+// l'errore: la richiesta prosegue senza fonti (il prompt della FASE D avvisa l'utente in quel caso)
+// invece di fallire del tutto.
+async function eseguiEstrazioneFaseA(
+  model: GenerativeModel,
+  domanda: string,
+  testoCronologia: string
+): Promise<RisultatoEstrazioneFaseA> {
+  const promptEstrazione = costruisciPromptEstrazione(domanda, testoCronologia);
+
+  const risultatoEstrazione = await model.generateContent(promptEstrazione);
+  let testoEstrazione = risultatoEstrazione.response.text().trim();
+  testoEstrazione = testoEstrazione.replace(/```json/g, "").replace(/```/g, "").trim();
+
+  try {
+    const datiEstratti = JSON.parse(testoEstrazione);
+    return {
+      keywords: Array.isArray(datiEstratti.keywords) ? datiEstratti.keywords : [],
+      citedRules: Array.isArray(datiEstratti.cited_rules) ? datiEstratti.cited_rules : [],
+      cardNames: Array.isArray(datiEstratti.card_names) ? datiEstratti.card_names : [],
+    };
+  } catch (erroreEstrazione) {
+    // Senza questo log il fallimento è invisibile a chi gestisce il servizio, ed è tutt'altro che
+    // innocuo: con parole chiave e carte vuote la ricerca locale non restituisce nulla, e il
+    // prompt della FASE D passa al ramo "nessuna fonte disponibile", che fa rispondere il modello
+    // basandosi sulla propria memoria — esattamente ciò che questo progetto esiste per impedire.
+    // L'utente almeno viene avvisato da quel ramo del prompt; nei log invece non compariva niente.
+    console.error(
+      "FASE A: risposta di Gemini non interpretabile come JSON. Si procede senza parole chiave né nomi di carta, quindi senza fonti.",
+      erroreEstrazione,
+      "Testo ricevuto (primi 500 caratteri):",
+      testoEstrazione.slice(0, 500)
+    );
+    return { keywords: [], citedRules: [], cardNames: [] };
+  }
+}
+
 export async function POST(request: NextRequest) {
   if (!richiestaConsentita(ipClient(request))) {
     return NextResponse.json(
@@ -121,25 +189,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (immagineBase64) {
-      const mimeTipiConsentiti = ["image/png", "image/jpeg", "image/webp"];
-      if (!mimeTipiConsentiti.includes(mimeTypeImmagine)) {
-        return NextResponse.json(
-          { errore: "Formato immagine non supportato. Usa PNG, JPEG o WEBP." },
-          { status: 400 }
-        );
-      }
-
-      // Una stringa base64 di lunghezza L rappresenta circa L*0.75 byte di dati originali,
-      // quindi ~10.6 milioni di caratteri base64 corrispondono a circa 8MB di immagine.
-      const LUNGHEZZA_MASSIMA_BASE64 = 10600000;
-      const lunghezzaBase64 = typeof immagineBase64 === "string" ? immagineBase64.length : 0;
-      if (lunghezzaBase64 > LUNGHEZZA_MASSIMA_BASE64) {
-        return NextResponse.json(
-          { errore: "Immagine troppo grande (massimo 8MB)." },
-          { status: 400 }
-        );
-      }
+    const erroreImmagine = erroreValidazioneImmagine(immagineBase64, mimeTypeImmagine);
+    if (erroreImmagine !== null) {
+      return NextResponse.json({ errore: erroreImmagine }, { status: 400 });
     }
 
     if (!domanda || typeof domanda !== "string" || domanda.trim() === "") {
@@ -172,36 +224,7 @@ export async function POST(request: NextRequest) {
       .join("\n\n");
 
     // FASE A: estrai parole chiave, numeri di regola e nomi di carte citati in tutta la conversazione finora
-    const promptEstrazione = costruisciPromptEstrazione(domanda, testoCronologia);
-
-    const risultatoEstrazione = await model.generateContent(promptEstrazione);
-    let testoEstrazione = risultatoEstrazione.response.text().trim();
-    testoEstrazione = testoEstrazione.replace(/```json/g, "").replace(/```/g, "").trim();
-
-    let keywords: string[] = [];
-    let citedRules: string[] = [];
-    let cardNames: string[] = [];
-    try {
-      const datiEstratti = JSON.parse(testoEstrazione);
-      keywords = Array.isArray(datiEstratti.keywords) ? datiEstratti.keywords : [];
-      citedRules = Array.isArray(datiEstratti.cited_rules) ? datiEstratti.cited_rules : [];
-      cardNames = Array.isArray(datiEstratti.card_names) ? datiEstratti.card_names : [];
-    } catch (erroreEstrazione) {
-      // Senza questo log il fallimento è invisibile a chi gestisce il servizio, ed è tutt'altro che
-      // innocuo: con parole chiave e carte vuote la ricerca locale non restituisce nulla, e il
-      // prompt della FASE D passa al ramo "nessuna fonte disponibile", che fa rispondere il modello
-      // basandosi sulla propria memoria — esattamente ciò che questo progetto esiste per impedire.
-      // L'utente almeno viene avvisato da quel ramo del prompt; nei log invece non compariva niente.
-      console.error(
-        "FASE A: risposta di Gemini non interpretabile come JSON. Si procede senza parole chiave né nomi di carta, quindi senza fonti.",
-        erroreEstrazione,
-        "Testo ricevuto (primi 500 caratteri):",
-        testoEstrazione.slice(0, 500)
-      );
-      keywords = [];
-      citedRules = [];
-      cardNames = [];
-    }
+    const { keywords, citedRules, cardNames } = await eseguiEstrazioneFaseA(model, domanda, testoCronologia);
 
     logDebug("[DEBUG] Nomi carte estratti dalla domanda:", JSON.stringify(cardNames));
 

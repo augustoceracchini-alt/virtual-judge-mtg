@@ -33,10 +33,6 @@ function caricaDati(nomeFile: string): DatiRegole {
   return dati;
 }
 
-function normalizza(testo: string): string {
-  return testo.toLowerCase();
-}
-
 export function getDataEfficaciaRegole(): string | null {
   return caricaDati("regole-compatte.json").dataEfficacia;
 }
@@ -180,17 +176,17 @@ const PUNTI_REGOLA_CITATA = 100;
 // quando la domanda riguarda le meccaniche di gioco e non le procedure di torneo.
 export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]): string {
   const dati = caricaDati("mtr-compatte.json");
-  const paroleChiaveNormalizzate = paroleChiave.map(normalizza).filter((p) => p.length > 2);
+  const paroleChiaveFiltrate = paroleChiave.filter((p) => p.length > 2);
 
   const blocchiValutati = dati.blocchi.map((blocco) => {
     const titolo = titoloSottosezione(blocco.testo);
 
     const argomentoPertinente =
-      titolo !== "" && paroleChiaveNormalizzate.some((parola) => iniziaUnaParolaDi(titolo, parola));
+      titolo !== "" && paroleChiaveFiltrate.some((parola) => iniziaUnaParolaDi(titolo, parola));
     const esplicitamenteCitato = bloccoCitaUnaDelleRegole(blocco.testo, regoleCitate);
 
     let punteggio = 0;
-    for (const parola of paroleChiaveNormalizzate) {
+    for (const parola of paroleChiaveFiltrate) {
       // Confronto per parola anche nel corpo, non solo nel titolo: il corpo usava ancora una
       // `includes` grezza, rimasta indietro rispetto alla correzione applicata alle CR. Qui non
       // decide l'ammissione (quella dipende dal titolo o dalla citazione esplicita) ma decide
@@ -222,11 +218,11 @@ export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]
 }
 
 function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
-  const paroleChiaveNormalizzate = paroleChiave.map(normalizza).filter((p) => p.length > 2);
+  const paroleChiaveFiltrate = paroleChiave.filter((p) => p.length > 2);
 
   const punteggiCapitoli = dati.capitoli.map((capitolo) => {
     let punteggio = 0;
-    for (const parola of paroleChiaveNormalizzate) {
+    for (const parola of paroleChiaveFiltrate) {
       if (titoloCapitoloPertinente(capitolo.titolo, parola)) {
         punteggio += 1;
       }
@@ -257,7 +253,7 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
 
   function calcolaPunteggioBlocco(blocco: BloccoRegola): number {
     let punteggio = 0;
-    for (const parola of paroleChiaveNormalizzate) {
+    for (const parola of paroleChiaveFiltrate) {
       if (iniziaUnaParolaDi(blocco.testo, parola)) {
         punteggio += 1;
       }
