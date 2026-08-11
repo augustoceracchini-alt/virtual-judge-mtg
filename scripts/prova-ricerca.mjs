@@ -124,6 +124,38 @@ const CASI = [
     statoIniziale: "FALLISCE",
   },
   {
+    // Stessa domanda del caso precedente, ma con le parole chiave POVERE che la FASE A produce
+    // davvero in certi turni: solo il nome della meccanica, senza i descrittori di stato. Serve
+    // perché il caso qui sopra usa parole scelte a mano, e passava già mentre la produzione
+    // sbagliava: senza questa variante non si distingue un miglioramento vero da uno fortunato.
+    //
+    // Difficoltà specifica, misurata: nell'intero capitolo 709 la parola "Room" compare in UN SOLO
+    // blocco su 22, la 709.5j, che è un rimando di 92 caratteri e non risponde alla domanda. La
+    // regola decisiva 709.5. non contiene né "room" né "door", quindi prende punteggio zero e
+    // veniva scartata dal filtro `punteggio > 0` anche quando il capitolo 709 era selezionato.
+    nome: "Stanza: solo il nome della meccanica",
+    fonte: "CR",
+    paroleChiave: ["Room", "door"],
+    regoleCitate: [],
+    attesi: ["709.5."],
+    nonVoluti: [],
+    statoIniziale: "FALLISCE",
+  },
+  {
+    // Variante più dura ancora: le parole generiche di un turno reale ("mana cost", "Enchantment",
+    // "permanent") con "Room" annegato in mezzo. Qui il capitolo 709 esiste nella classifica dei
+    // voti del Glossario ma è SETTIMO, perché ogni parola generica porta un voto ad altrettanti
+    // capitoli genericamente pertinenti (107 "Numbers and Symbols", 303 "Enchantments", 110
+    // "Permanents", 205 "Type Line", 729 "Merging with Permanents") e tutto pareggia a un voto.
+    nome: "Stanza: nome della meccanica annegato fra parole generiche",
+    fonte: "CR",
+    paroleChiave: ["mana cost", "Enchantment", "permanent", "Room"],
+    regoleCitate: [],
+    attesi: ["709.5."],
+    nonVoluti: [],
+    statoIniziale: "FALLISCE",
+  },
+  {
     nome: "Corruzione in torneo",
     fonte: "MTR",
     paroleChiave: ["bribery", "wagering", "prize"],

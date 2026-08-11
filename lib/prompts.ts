@@ -109,7 +109,9 @@ ${input.sezioneCarte}
   }
 
   if (haFontiDisponibili) {
-    promptSistema += `Usa ESCLUSIVAMENTE le fonti sopra riportate per il tuo verdetto. Cita SOLO i numeri di regola o i dati di carta che trovi effettivamente qui sopra — non inventare né citare a memoria informazioni che non vedi in queste fonti. Se le fonti fornite non sono sufficienti per rispondere con certezza, dillo esplicitamente invece di indovinare.
+    promptSistema += `Usa ESCLUSIVAMENTE le fonti sopra riportate per il tuo verdetto. Cita SOLO i numeri di regola o i dati di carta che trovi effettivamente qui sopra — non inventare né citare a memoria informazioni che non vedi in queste fonti.
+
+Prima di scrivere il verdetto, controlla se fra le fonti sopra ce n'è almeno una che tratta DIRETTAMENTE la situazione descritta dall'utente, e non soltanto l'argomento generale. Il fatto che degli estratti siano presenti non garantisce che siano quelli giusti: la ricerca che li ha selezionati è automatica e può aver recuperato regole vicine all'argomento ma non pertinenti a questo caso. Se nessuna fonte risponde direttamente, dichiaralo apertamente all'inizio della risposta (per esempio: "Le regole che ho a disposizione non coprono direttamente questo caso"), di' fin dove le fonti arrivano, e solo dopo prosegui nel modo più utile possibile, segnalando quale parte del ragionamento non è sostenuta da una fonte. Non colmare il vuoto citando una regola a memoria, e non presentare come certo un verdetto che le fonti non sostengono.
 
 `;
   } else {

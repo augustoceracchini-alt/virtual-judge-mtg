@@ -87,10 +87,35 @@ function contieneRegolaCondizionaleComplessa(testoRegole: string): boolean {
     // giudice ha citato correttamente la 709.5 ma ne ha invertito la conclusione (ha detto che il
     // costo di mana si combina SEMPRE, quando la regola dice il contrario per il lato bloccato), e
     // la FASE E non scattava perché nessun indicatore esistente compare in questo testo.
-    "as long as this permanent doesn’t have",
+    "as long as this permanent doesn't have",
   ];
-  const testoNormalizzato = testoRegole.toLowerCase();
+  // Gli apostrofi vengono uniformati all'ASCII su ENTRAMBI i lati del confronto. Il testo ufficiale
+  // delle CR usa l'apostrofo tipografico (U+2019), gli indicatori qui sopra sono scritti in ASCII:
+  // senza questa normalizzazione l'indicatore della 709.5 non troverebbe mai il proprio testo. La
+  // dipendenza era fragile in entrambe le direzioni — bastava che una rigenerazione di
+  // data/regole-compatte.json normalizzasse la punteggiatura, o che qualcuno riscrivesse un
+  // indicatore copiandolo da un'altra fonte, per spegnere il controllo in silenzio.
+  const testoNormalizzato = testoRegole.toLowerCase().replace(/[‘’]/g, "'");
   return indicatori.some((indicatore) => testoNormalizzato.includes(indicatore));
+}
+
+// Estrae i numeri di regola citati in un testo, nella forma usata dalle Comprehensive Rules
+// ("714.4", "113.7a"). I duplicati vengono tolti: interessa quali regole sono citate, non quante
+// volte.
+function numeriDiRegolaCitati(testo: string): string[] {
+  return [...new Set(testo.match(/\b\d{3}\.\d+[a-z]?\b/g) ?? [])];
+}
+
+// Numeri di regola che il verdetto CITA ma che non compaiono fra gli estratti che gli sono stati
+// FORNITI: il modello li ha presi dalla propria memoria invece che dalle fonti, cioè esattamente
+// ciò che questo progetto esiste per impedire. Finora una citazione inventata non lasciava alcuna
+// traccia, né nei log né nel comportamento.
+//
+// Il confronto è volutamente conservativo: una risposta che cita "510.1" è considerata coperta
+// anche se gli estratti contengono solo "510.1c", perché quel numero compare comunque nel testo
+// fornito. Meglio non segnalare un caso dubbio che riempire i log di falsi allarmi.
+function regoleCitateSenzaFonte(risposta: string, estratti: string): string[] {
+  return numeriDiRegolaCitati(risposta).filter((numero) => !estratti.includes(numero));
 }
 
 function eRichiestaDiChiarimenti(risposta: string): boolean {
@@ -357,9 +382,28 @@ export async function POST(request: NextRequest) {
     // Il controllo guarda entrambi i regolamenti: una condizione a più clausole può trovarsi
     // anche nel regolamento torneistico, e comunque la verifica deve poter partire pure quando
     // è quest'ultimo a reggere il verdetto.
+    const tutteLeFonti = `${estrattiRegole}\n${estrattiRegoleTorneo}`;
+
+    // Una richiesta di chiarimenti non è un verdetto: non ha senso cercarvi citazioni da verificare.
+    const citazioniSenzaFonte = eRichiestaDiChiarimenti(risposta)
+      ? []
+      : regoleCitateSenzaFonte(risposta, tutteLeFonti);
+
+    if (citazioniSenzaFonte.length > 0) {
+      console.error(
+        "FASE D: il verdetto cita numeri di regola che NON compaiono negli estratti forniti, quindi presi dalla memoria del modello e non dalle fonti:",
+        citazioniSenzaFonte.join(", ")
+      );
+    }
+
+    // La verifica scatta anche quando il verdetto cita regole che non gli sono state fornite, non
+    // solo sugli indicatori testuali. Gli indicatori guardano infatti il testo delle regole
+    // RECUPERATE: se il recupero ha già mancato la regola decisiva, nessun indicatore compare e il
+    // doppio controllo resta inerte proprio nel caso peggiore, quello in cui il modello sta
+    // rispondendo a memoria. Una citazione senza fonte è il segnale che quel caso si è verificato.
     const necessitaVerifica =
       !eRichiestaDiChiarimenti(risposta) &&
-      contieneRegolaCondizionaleComplessa(`${estrattiRegole}\n${estrattiRegoleTorneo}`);
+      (contieneRegolaCondizionaleComplessa(tutteLeFonti) || citazioniSenzaFonte.length > 0);
 
     if (necessitaVerifica) {
       const promptVerifica = costruisciPromptVerifica({
