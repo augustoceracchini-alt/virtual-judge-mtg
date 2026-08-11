@@ -82,6 +82,12 @@ function contieneRegolaCondizionaleComplessa(testoRegole: string): boolean {
     // Copre anche "and it isn't": qualsiasi testo che contenga quella forma contiene già questa.
     " and it is",
     "if the number of",
+    // Regola 709.5 (Stanze/Room e altre carte con riga del tipo condivisa): "As long as this
+    // permanent doesn't have [designazione], it doesn't have [caratteristica]". Caso reale: il
+    // giudice ha citato correttamente la 709.5 ma ne ha invertito la conclusione (ha detto che il
+    // costo di mana si combina SEMPRE, quando la regola dice il contrario per il lato bloccato), e
+    // la FASE E non scattava perché nessun indicatore esistente compare in questo testo.
+    "as long as this permanent doesn’t have",
   ];
   const testoNormalizzato = testoRegole.toLowerCase();
   return indicatori.some((indicatore) => testoNormalizzato.includes(indicatore));
