@@ -47,12 +47,37 @@ while ((match = regexCapitolo.exec(testoIndice)) !== null) {
 }
 console.log(`Trovati ${capitoli.length} capitoli.`);
 
+// Il corpo del documento finisce con due sezioni non numerate: il Glossario (definizioni dei
+// termini di gioco in ordine alfabetico) e i Credits (crediti/legale, senza alcun valore per la
+// ricerca). Senza individuarle esplicitamente, il ciclo qui sotto le attribuirebbe entrambe
+// all'ultimo capitolo numerato incontrato prima di loro (905, "Conspiracy Draft"): le quasi 750
+// voci di glossario finirebbero etichettate come se fossero la regola 905, un'attribuzione falsa
+// che rischia di essere mostrata al modello come fonte citabile. Il Glossario va invece isolato ed
+// estratto a parte: ogni voce spesso rimanda esplicitamente al capitolo numerato che tratta quel
+// termine ("Room" -> "See rule 709, 'Split Cards.'"), un indizio utile quando quel capitolo ha un
+// titolo che non condivide vocabolario con la domanda dell'utente.
+console.log("Individuo il confine del Glossario nel testo...");
+const paragrafiCompleti = testoCorpo.split(/\n\s*\n+/).filter((p) => p.trim() !== "");
+const indiceGlossario = paragrafiCompleti.findIndex((p) => p.trim() === "Glossary");
+const indiceCredits = paragrafiCompleti.findIndex((p) => p.trim() === "Credits");
+
+if (indiceGlossario === -1 || indiceCredits === -1 || indiceCredits <= indiceGlossario) {
+  console.error(
+    "ATTENZIONE: non ho trovato i paragrafi \"Glossary\"/\"Credits\" che delimitano il Glossario nel testo. Il glossario non verrà estratto: la ricerca perde la possibilità di reindirizzare una parola chiave nota (es. \"Room\") al capitolo numerato giusto, ma il resto del regolamento viene comunque elaborato normalmente."
+  );
+}
+
+const paragrafiRegole = indiceGlossario !== -1 ? paragrafiCompleti.slice(0, indiceGlossario) : paragrafiCompleti;
+const paragrafiGlossario =
+  indiceGlossario !== -1 && indiceCredits > indiceGlossario
+    ? paragrafiCompleti.slice(indiceGlossario + 1, indiceCredits)
+    : [];
+
 console.log("Estraggo i blocchi di regole...");
-const paragrafi = testoCorpo.split(/\n\s*\n+/).filter((p) => p.trim() !== "");
 const blocchi = [];
 let capitoloCorrente = null;
 
-for (const paragrafo of paragrafi) {
+for (const paragrafo of paragrafiRegole) {
   const headerMatch = paragrafo.match(/^(\d{3})\.\s+(.+)$/);
   if (headerMatch) {
     capitoloCorrente = { numero: headerMatch[1], titolo: headerMatch[2].trim() };
@@ -68,12 +93,24 @@ for (const paragrafo of paragrafi) {
 }
 console.log(`Trovati ${blocchi.length} blocchi di regole.`);
 
+console.log("Estraggo il Glossario...");
+const glossario = [];
+for (const paragrafo of paragrafiGlossario) {
+  const righe = paragrafo.split("\n");
+  const termine = righe[0].trim();
+  const definizione = righe.slice(1).join("\n").trim();
+  if (termine !== "" && definizione !== "") {
+    glossario.push({ termine, definizione });
+  }
+}
+console.log(`Trovate ${glossario.length} voci di glossario.`);
+
 if (capitoli.length === 0 || blocchi.length === 0) {
   console.error("ATTENZIONE: il numero di capitoli o blocchi trovati è zero. Qualcosa non va nella struttura del file. Contatta il supporto prima di procedere.");
   process.exit(1);
 }
 
-const datiCompatti = { dataEfficacia, capitoli, blocchi };
+const datiCompatti = { dataEfficacia, capitoli, blocchi, glossario };
 fs.writeFileSync(percorsoFileCompatto, JSON.stringify(datiCompatti), "utf-8");
 
 const dimensioneOriginale = (fs.statSync(percorsoFileGrezzo).size / 1024 / 1024).toFixed(2);

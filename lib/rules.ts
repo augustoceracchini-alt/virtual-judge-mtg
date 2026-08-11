@@ -12,10 +12,18 @@ interface Capitolo {
   titolo: string;
 }
 
+interface VoceGlossario {
+  termine: string;
+  definizione: string;
+}
+
 interface DatiRegole {
   dataEfficacia: string | null;
   capitoli: Capitolo[];
   blocchi: BloccoRegola[];
+  // Presente solo in regole-compatte.json (le CR hanno un Glossario ufficiale). mtr-compatte.json
+  // non ha questo campo: va trattato come assente, non come un errore.
+  glossario?: VoceGlossario[];
 }
 
 const cacheDati = new Map<string, DatiRegole>();
@@ -31,10 +39,6 @@ function caricaDati(nomeFile: string): DatiRegole {
   const dati = JSON.parse(testoJson) as DatiRegole;
   cacheDati.set(nomeFile, dati);
   return dati;
-}
-
-function normalizza(testo: string): string {
-  return testo.toLowerCase();
 }
 
 export function getDataEfficaciaRegole(): string | null {
@@ -180,17 +184,17 @@ const PUNTI_REGOLA_CITATA = 100;
 // quando la domanda riguarda le meccaniche di gioco e non le procedure di torneo.
 export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]): string {
   const dati = caricaDati("mtr-compatte.json");
-  const paroleChiaveNormalizzate = paroleChiave.map(normalizza).filter((p) => p.length > 2);
+  const paroleChiaveFiltrate = paroleChiave.filter((p) => p.length > 2);
 
   const blocchiValutati = dati.blocchi.map((blocco) => {
     const titolo = titoloSottosezione(blocco.testo);
 
     const argomentoPertinente =
-      titolo !== "" && paroleChiaveNormalizzate.some((parola) => iniziaUnaParolaDi(titolo, parola));
+      titolo !== "" && paroleChiaveFiltrate.some((parola) => iniziaUnaParolaDi(titolo, parola));
     const esplicitamenteCitato = bloccoCitaUnaDelleRegole(blocco.testo, regoleCitate);
 
     let punteggio = 0;
-    for (const parola of paroleChiaveNormalizzate) {
+    for (const parola of paroleChiaveFiltrate) {
       // Confronto per parola anche nel corpo, non solo nel titolo: il corpo usava ancora una
       // `includes` grezza, rimasta indietro rispetto alla correzione applicata alle CR. Qui non
       // decide l'ammissione (quella dipende dal titolo o dalla citazione esplicita) ma decide
@@ -222,23 +226,109 @@ export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]
 }
 
 function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
-  const paroleChiaveNormalizzate = paroleChiave.map(normalizza).filter((p) => p.length > 2);
+  const paroleChiaveFiltrate = paroleChiave.filter((p) => p.length > 2);
 
-  const punteggiCapitoli = dati.capitoli.map((capitolo) => {
+  function calcolaPunteggioBlocco(blocco: BloccoRegola): number {
     let punteggio = 0;
-    for (const parola of paroleChiaveNormalizzate) {
-      if (titoloCapitoloPertinente(capitolo.titolo, parola)) {
+    for (const parola of paroleChiaveFiltrate) {
+      if (iniziaUnaParolaDi(blocco.testo, parola)) {
         punteggio += 1;
       }
     }
-    return { capitolo, punteggio };
+    if (bloccoCitaUnaDelleRegole(blocco.testo, regoleCitate)) {
+      punteggio += 10;
+    }
+    return punteggio;
+  }
+
+  // Calcolato una sola volta e riusato sia per candidare i capitoli per corpo (sotto), sia per
+  // scegliere i blocchi migliori dentro ciascun capitolo, sia per la rete di sicurezza globale.
+  const punteggiBlocchi = dati.blocchi.map((blocco) => ({ blocco, punteggio: calcolaPunteggioBlocco(blocco) }));
+
+  // Quanti punti deve avere un singolo blocco perché il suo capitolo venga considerato "pertinente
+  // nel corpo": una sola parola chiave comune (punteggio 1, es. "cost") non basta, altrimenti
+  // qualunque capitolo che nomina di sfuggita un termine generico entrerebbe in lista.
+  const SOGLIA_PUNTEGGIO_BLOCCO_PER_CORPO = 2;
+  // Quanti blocchi con quel punteggio minimo deve avere un capitolo per essere candidato SOLO in
+  // base al corpo (titolo escluso). Misurato sul caso "Stanza con un solo lato sbloccato" (vedi
+  // scripts/prova-ricerca.mjs): il capitolo 709 "Split Cards" contiene la regola 709.5 che risponde
+  // alla domanda (il costo di mana di una Stanza dipende da quale lato è sbloccato), ma il titolo
+  // non condivide vocabolario con "Room"/"door"/"unlocked"/"mana value" (lo stesso problema già
+  // noto per "Saga Cards"/"lore counter" e "Keyword Abilities"/"deathtouch") e nessun suo blocco
+  // è mai il più pertinente in assoluto sul documento, quindi restava fuori anche dalla rete di
+  // sicurezza globale. Il capitolo però ha SEI blocchi diversi che citano "door", "unlocked",
+  // "mana cost" o "locked": un segnale di pertinenza aggregato sul corpo, anche senza un titolo
+  // che lo dica. La soglia 3 è scelta per escludere capitoli con un solo blocco fuori tema (es.
+  // "116 Special Actions", che cita di sfuggita "locked" una volta sola) pur restando sotto le sei
+  // occorrenze reali del caso misurato.
+  const MINIMO_BLOCCHI_CORPO_PER_CANDIDATURA = 3;
+
+  const blocchiCorpoPerCapitolo = new Map<string, number>();
+  // Punteggio del blocco singolarmente più pertinente di ciascun capitolo. Serve da spareggio fra
+  // capitoli candidati solo per corpo (vedi sotto): un conteggio di blocchi può pareggiare per puro
+  // caso fra capitoli scorrelati che condividono solo parole generiche ("half", "Enchantment"), ma
+  // il capitolo davvero pertinente tende ad avere ALMENO un blocco con un punteggio nettamente più
+  // alto degli altri, perché quel blocco tratta l'argomento specifico invece di nominarlo di
+  // sfuggita. Misurato sul caso "Stanza con un solo lato sbloccato": con le parole chiave reali
+  // prodotte dalla FASE A, i capitoli 111 "Tokens", 309 "Dungeons", 702 "Keyword Abilities" e 709
+  // "Split Cards" pareggiavano tutti a 8 blocchi con punteggio, e l'ordine del documento (che decide
+  // i pareggi rimasti) escludeva 709 solo perché ha il numero di capitolo più alto dei quattro. Il
+  // blocco più pertinente di ciascuno vale invece 2, 3, 2 e 5: 709.5j (quello che nomina
+  // esplicitamente "door" e "Room") è nettamente il più specifico.
+  const puntoMassimoPerCapitolo = new Map<string, number>();
+  for (const { blocco, punteggio } of punteggiBlocchi) {
+    if (punteggio >= SOGLIA_PUNTEGGIO_BLOCCO_PER_CORPO) {
+      blocchiCorpoPerCapitolo.set(blocco.numeroCapitolo, (blocchiCorpoPerCapitolo.get(blocco.numeroCapitolo) ?? 0) + 1);
+    }
+    const massimoAttuale = puntoMassimoPerCapitolo.get(blocco.numeroCapitolo) ?? 0;
+    if (punteggio > massimoAttuale) {
+      puntoMassimoPerCapitolo.set(blocco.numeroCapitolo, punteggio);
+    }
+  }
+
+  const punteggiCapitoli = dati.capitoli.map((capitolo) => {
+    let punteggioTitolo = 0;
+    for (const parola of paroleChiaveFiltrate) {
+      if (titoloCapitoloPertinente(capitolo.titolo, parola)) {
+        punteggioTitolo += 1;
+      }
+    }
+    return {
+      capitolo,
+      punteggioTitolo,
+      blocchiCorpo: blocchiCorpoPerCapitolo.get(capitolo.numero) ?? 0,
+      puntoMassimo: puntoMassimoPerCapitolo.get(capitolo.numero) ?? 0,
+    };
   });
 
-  const capitoliSelezionati = punteggiCapitoli
-    .filter((c) => c.punteggio > 0)
-    .sort((a, b) => b.punteggio - a.punteggio)
-    .slice(0, 4)
+  // Il titolo resta il criterio principale della selezione euristica (è il segnale più affidabile
+  // fra quelli non certi, misurato su molti casi).
+  const MASSIMO_CAPITOLI_PER_TITOLO = 4;
+  const capitoliPerTitolo = punteggiCapitoli
+    .filter((c) => c.punteggioTitolo > 0)
+    .sort((a, b) => b.punteggioTitolo - a.punteggioTitolo)
+    .slice(0, MASSIMO_CAPITOLI_PER_TITOLO)
     .map((c) => c.capitolo.numero);
+
+  // I candidati SOLO per corpo (punteggio di titolo zero) hanno un budget di capitoli separato,
+  // più piccolo, invece di competere con quelli per titolo per lo stesso taglio. Motivo: quando più
+  // capitoli scorrelati pareggiano per puro caso sul punto massimo (vedi `puntoMassimoPerCapitolo`
+  // sopra), un taglio unico ammette solo IL PRIMO in ordine di documento, ed è un caso reale, non
+  // ipotetico — misurato sul caso "Stanza con un solo lato sbloccato": con le parole chiave vere
+  // della FASE A, il capitolo 709 "Split Cards" pareggia a punteggio massimo 5 con "205 Type Line"
+  // (che tratta i sottotipi di incantesimo in generale, non le Stanze in particolare), e un solo
+  // slot ammetteva 205 ma non 709 solo perché "205" precede "709" nel documento. Ammettendone due
+  // entrano entrambi, senza dover indovinare quale dei due pareggianti sia quello vero.
+  const MASSIMO_CAPITOLI_SOLO_CORPO = 2;
+  const capitoliSoloCorpo = punteggiCapitoli
+    .filter((c) => c.punteggioTitolo === 0 && c.blocchiCorpo >= MINIMO_BLOCCHI_CORPO_PER_CANDIDATURA)
+    .sort((a, b) => b.puntoMassimo - a.puntoMassimo)
+    .slice(0, MASSIMO_CAPITOLI_SOLO_CORPO)
+    .map((c) => c.capitolo.numero);
+
+  const capitoliPerTitoloOCorpo = [...capitoliPerTitolo, ...capitoliSoloCorpo];
+
+  const capitoliSelezionati = [...capitoliPerTitoloOCorpo];
 
   // Un numero di regola citato porta con sé il capitolo di appartenenza (es. "510.1c" -> "510"),
   // che aggiungiamo a quelli da esaminare. Il capitolo va però verificato contro l'indice del
@@ -255,19 +345,6 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
     }
   }
 
-  function calcolaPunteggioBlocco(blocco: BloccoRegola): number {
-    let punteggio = 0;
-    for (const parola of paroleChiaveNormalizzate) {
-      if (iniziaUnaParolaDi(blocco.testo, parola)) {
-        punteggio += 1;
-      }
-    }
-    if (bloccoCitaUnaDelleRegole(blocco.testo, regoleCitate)) {
-      punteggio += 10;
-    }
-    return punteggio;
-  }
-
   // Prende i migliori blocchi PER CIASCUN capitolo selezionato (invece di un unico taglio
   // "top N assoluti" su tutti i capitoli insieme), così un capitolo poco chiacchierone ma
   // decisivo (es. 714 "Saga Cards" con un solo blocco davvero pertinente) non viene escluso
@@ -275,9 +352,15 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   // ne ha tanti con punteggio pari o superiore.
   const MASSIMO_BLOCCHI_PER_CAPITOLO = 6;
 
-  function miglioriBlocchiTra(blocchi: BloccoRegola[], quanti: number) {
-    return blocchi
-      .map((blocco) => ({ blocco, punteggio: calcolaPunteggioBlocco(blocco) }))
+  // I capitoli ammessi solo per corpo hanno diritto a meno blocchi ciascuno dei capitoli trovati per
+  // titolo (un segnale più affidabile): quando più di uno di questi capitoli viene ammesso (vedi
+  // `capitoliSoloCorpo` sopra), un budget pieno per ciascuno esaurirebbe comunque LIMITE_CARATTERI
+  // prima che tocchi al secondo, vanificando il motivo per cui se ne ammette più di uno.
+  const MASSIMO_BLOCCHI_PER_CAPITOLO_SOLO_CORPO = 3;
+  const insiemeCapitoliSoloCorpo = new Set(capitoliSoloCorpo);
+
+  function miglioriBlocchiTra(elementi: { blocco: BloccoRegola; punteggio: number }[], quanti: number) {
+    return elementi
       .filter((b) => b.punteggio > 0)
       .sort((a, b) => b.punteggio - a.punteggio)
       .slice(0, quanti);
@@ -285,8 +368,8 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
 
   const perCapitolo = capitoliSelezionati.flatMap((numeroCapitolo) =>
     miglioriBlocchiTra(
-      dati.blocchi.filter((b) => b.numeroCapitolo === numeroCapitolo),
-      MASSIMO_BLOCCHI_PER_CAPITOLO
+      punteggiBlocchi.filter(({ blocco }) => blocco.numeroCapitolo === numeroCapitolo),
+      insiemeCapitoliSoloCorpo.has(numeroCapitolo) ? MASSIMO_BLOCCHI_PER_CAPITOLO_SOLO_CORPO : MASSIMO_BLOCCHI_PER_CAPITOLO
     )
   );
 
@@ -313,7 +396,7 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   const MASSIMO_BLOCCHI_SENZA_CAPITOLI = 15;
   const quantiGlobali =
     capitoliSelezionati.length > 0 ? MASSIMO_BLOCCHI_RETE_DI_SICUREZZA : MASSIMO_BLOCCHI_SENZA_CAPITOLI;
-  const globali = miglioriBlocchiTra(dati.blocchi, quantiGlobali);
+  const globali = miglioriBlocchiTra(punteggiBlocchi, quantiGlobali);
 
   // I blocchi trovati globalmente vanno per primi: sono i più pertinenti in assoluto, e solo
   // stando in testa sopravvivono al limite di caratteri applicato da assemblaEstratti invece di
