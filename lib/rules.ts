@@ -151,14 +151,29 @@ function bloccoCitaUnaDelleRegole(testoBlocco: string, regoleCitate: string[]): 
 }
 
 // Quanto testo di regolamento al massimo può finire nel prompt, per singola fonte.
-const LIMITE_CARATTERI = 9000;
+//
+// Il valore precedente (9000) era stato scelto quando si credeva che la quota gratuita di Gemini
+// fosse vincolata sui TOKEN. Non è così: è limitata soprattutto nel numero di richieste al giorno.
+// Nel frattempo quel tetto era diventato il vincolo che decideva sempre quali regole arrivavano al
+// modello: misurato sui casi di scripts/prova-ricerca.mjs, gli estratti delle CR pesavano
+// 7362 / 8703 / 8414 / 7553 / 8949 / 8659 / 8715 / 7769 caratteri, cioè fra l'82% e il 99% del
+// limite in OGNI caso di prova. Con entrambe le fonti al massimo si passa da ~4500 a ~9000 token
+// di regolamento per richiesta: irrilevante per la quota, decisivo per non troncare via proprio la
+// regola che risponde alla domanda.
+const LIMITE_CARATTERI = 18000;
 
 function assemblaEstratti(blocchiOrdinati: BloccoRegola[]): string {
   let testoFinale = "";
   for (const blocco of blocchiOrdinati) {
     const prossimoBlocco = `[Capitolo ${blocco.numeroCapitolo} - ${blocco.titoloCapitolo}]\n${blocco.testo}\n\n`;
     if ((testoFinale + prossimoBlocco).length > LIMITE_CARATTERI) {
-      break;
+      // `continue` e non `break`: il blocco che non ci sta viene saltato, ma quelli dopo di lui
+      // continuano a riempire lo spazio rimasto. Con `break` bastava un blocco lungo per chiudere
+      // l'assemblaggio e buttare via anche tutti i blocchi corti che sarebbero entrati dopo: i
+      // blocchi delle CR arrivano a 2818 caratteri, e i 17 blocchi sopra i 1500 caratteri (su 3129)
+      // potevano così azzerare tutta la coda della classifica. I blocchi arrivano qui già ordinati
+      // per pertinenza, quindi saltarne uno non fa mai scavalcare un blocco più pertinente.
+      continue;
     }
     testoFinale += prossimoBlocco;
   }
@@ -223,6 +238,156 @@ export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]
     .map((valutato) => valutato.blocco);
 
   return assemblaEstratti(pertinenti);
+}
+
+// I blocchi delle Comprehensive Rules sono organizzati ad albero: la regola "709.5." enuncia il
+// principio, e le sotto-regole "709.5a".."709.5j" lo raffinano. Il punteggio per parole chiave le
+// tratta invece come blocchi indipendenti, e questo fa perdere il senso proprio nei casi difficili.
+//
+// Misurato sul caso delle Stanze: nell'intero capitolo 709 la parola "Room" compare in UN SOLO
+// blocco su 22, la 709.5j (92 caratteri, dice soltanto che le Stanze sono carte divise con
+// designazioni "porta"). La regola che risponde davvero alla domanda è la 709.5. (633 caratteri:
+// finché un lato non ha la designazione "sbloccato", il permanente non ha il nome, il costo di mana
+// né il testo di quel lato), e NON contiene né "room" né "door". Recuperare la 709.5j senza la
+// 709.5. consegna al modello il rimando senza la regola: è esattamente il caso in cui il giudice
+// citava la 709.5 e ne invertiva la conclusione.
+//
+// Restituisce il prefisso del blocco padre ("709.5j" -> "709.5."), oppure null se il blocco è già
+// una radice. Il vincolo delle tre cifre iniziali limita di fatto la funzione alle CR: la
+// numerazione dell'MTR ("3.16 Sideboard") non corrisponde, e per quel documento è un no-op.
+function prefissoBloccoPadre(testoBlocco: string): string | null {
+  const corrispondenza = testoBlocco.trimStart().match(/^(\d{3}\.\d+)[a-z]\b/);
+  return corrispondenza ? `${corrispondenza[1]}.` : null;
+}
+
+// Antepone a ogni blocco selezionato la propria regola padre, se esiste e non è già in lista. Il
+// padre va PRIMA del figlio per due motivi: enuncia il principio che il figlio raffina, e stando
+// davanti sopravvive insieme a lui al limite di caratteri invece di essere accodato e troncato.
+function conBlocchiPadre(selezionati: BloccoRegola[], tuttiIBlocchi: BloccoRegola[]): BloccoRegola[] {
+  const risultato: BloccoRegola[] = [];
+  const visti = new Set<BloccoRegola>();
+
+  function aggiungi(blocco: BloccoRegola) {
+    if (!visti.has(blocco)) {
+      visti.add(blocco);
+      risultato.push(blocco);
+    }
+  }
+
+  for (const blocco of selezionati) {
+    const prefissoPadre = prefissoBloccoPadre(blocco.testo);
+    if (prefissoPadre !== null) {
+      const padre = tuttiIBlocchi.find(
+        (candidato) =>
+          candidato.numeroCapitolo === blocco.numeroCapitolo &&
+          candidato.testo.trimStart().startsWith(prefissoPadre)
+      );
+      if (padre) {
+        aggiungi(padre);
+      }
+    }
+    aggiungi(blocco);
+  }
+
+  return risultato;
+}
+
+// Quanto conta il voto di una parola chiave nella scelta dei capitoli suggeriti dal Glossario: una
+// parola rara nel regolamento dice molto di più su quale capitolo serve di una parola diffusa.
+// Misurato sul corpus attuale (3129 blocchi): "door" compare in 1 blocco e pesa 0,631; "Room" in 15
+// e pesa 0,245; "Enchantment" in 55 e pesa 0,171; "permanent" in 532 e pesa 0,110. Il logaritmo
+// serve a comprimere la scala: senza, una parola presente in un solo blocco varrebbe cinquecento
+// volte una comune, e un singolo termine raro fuori tema deciderebbe da solo la selezione.
+//
+// La pesatura è applicata DELIBERATAMENTE solo qui e non al punteggio dei blocchi: quel punteggio è
+// tarato su molti casi misurati, mentre questo canale è nuovo e isolato. Estenderla al punteggio
+// principale resta un'ipotesi da misurare a parte.
+function pesoDiRarita(blocchi: BloccoRegola[], parola: string): number {
+  let quantiBlocchi = 0;
+  for (const blocco of blocchi) {
+    if (iniziaUnaParolaDi(blocco.testo, parola)) {
+      quantiBlocchi += 1;
+    }
+  }
+  return 1 / Math.log2(2 + quantiBlocchi);
+}
+
+// Quanti capitoli al massimo possono entrare grazie ai rimandi del Glossario ufficiale.
+const MASSIMO_CAPITOLI_DA_GLOSSARIO = 2;
+
+// Le Comprehensive Rules si chiudono con un Glossario ufficiale (726 voci, estratte a parte da
+// scripts/prepara-regole.mjs) e 631 di quelle voci contengono un rimando esplicito al capitolo che
+// tratta il termine, nella forma "See rule 709, 'Split Cards.'". È una mappa vocabolario -> capitolo
+// scritta da Wizards: esattamente il ponte che manca alla selezione per titolo, che fallisce ogni
+// volta che il titolo del capitolo non condivide parole con la domanda ("Saga Cards" non contiene
+// "lore counter", "Keyword Abilities" non contiene "deathtouch", "Split Cards" non contiene "Room").
+//
+// Un tentativo precedente di agganciare il glossario era stato scartato perché guardava UNA PAROLA
+// ALLA VOLTA, e su "Room" il glossario è ambiguo: rimanda sia a 709 "Split Cards" sia a 309
+// "Dungeons", che usa "room" con un significato completamente diverso. Qui invece si contano i VOTI
+// di tutte le parole chiave insieme, e l'ambiguità si scioglie da sola senza dover indovinare: nel
+// caso reale delle Stanze le parole "room", "door" e "unlocked" danno 709 -> 3 voti contro
+// 309 -> 1 voto, perché solo "room" è ambiguo mentre le altre due rimandano al solo 709.
+//
+// Ogni parola chiave vota al massimo UNA VOLTA per capitolo (da qui l'insieme intermedio): senza
+// questo vincolo una parola generica come "mana", che compare in molte voci di glossario rimandanti
+// allo stesso capitolo, peserebbe quanto diverse parole indipendenti che convergono.
+//
+// Il voto non vale però 1 per tutti: vale `pesoDiRarita` (vedi sotto). Con voti tutti uguali a 1
+// bastavano poche parole generiche per soffocare quella decisiva — misurato sul caso reale delle
+// Stanze con le parole chiave di un turno vero ("mana cost", "Enchantment", "permanent", "Room"):
+// ogni parola generica portava un voto a un capitolo genericamente pertinente (107 "Numbers and
+// Symbols", 303 "Enchantments", 110 "Permanents", 205 "Type Line", 729 "Merging with Permanents"),
+// tutto pareggiava a un voto e il capitolo 709 finiva SETTIMO in classifica.
+function capitoliDaGlossario(
+  dati: DatiRegole,
+  paroleChiave: string[],
+  puntoMassimoPerCapitolo: Map<string, number>
+): string[] {
+  const glossario = dati.glossario;
+  // Il campo è opzionale nel tipo e mtr-compatte.json non ce l'ha: l'assenza è un caso previsto,
+  // non un errore.
+  if (!glossario) {
+    return [];
+  }
+
+  const voti = new Map<string, number>();
+  for (const parola of paroleChiave) {
+    const capitoliDiQuestaParola = new Set<string>();
+    for (const voce of glossario) {
+      if (!iniziaUnaParolaDi(voce.termine, parola)) {
+        continue;
+      }
+      for (const rimando of voce.definizione.matchAll(/See rule (\d{3})/g)) {
+        capitoliDiQuestaParola.add(rimando[1]);
+      }
+    }
+    if (capitoliDiQuestaParola.size === 0) {
+      continue;
+    }
+    // Calcolato solo per le parole che hanno davvero agganciato una voce di glossario, che sono
+    // poche: il costo resta trascurabile anche se ogni chiamata riscorre i blocchi.
+    const peso = pesoDiRarita(dati.blocchi, parola);
+    for (const numeroCapitolo of capitoliDiQuestaParola) {
+      voti.set(numeroCapitolo, (voti.get(numeroCapitolo) ?? 0) + peso);
+    }
+  }
+
+  return [...voti.entries()]
+    // Stesso controllo già usato per le regole citate: il capitolo deve esistere in QUESTA fonte.
+    .filter(([numeroCapitolo]) => dati.capitoli.some((c) => c.numero === numeroCapitolo))
+    .sort((a, b) => {
+      const differenzaVoti = b[1] - a[1];
+      if (differenzaVoti !== 0) {
+        return differenzaVoti;
+      }
+      // A parità di voti si riusa lo spareggio già adottato per i capitoli ammessi solo per corpo,
+      // invece di inventarne un altro: il capitolo davvero pertinente tende ad avere almeno un
+      // blocco nettamente più specifico degli altri.
+      return (puntoMassimoPerCapitolo.get(b[0]) ?? 0) - (puntoMassimoPerCapitolo.get(a[0]) ?? 0);
+    })
+    .slice(0, MASSIMO_CAPITOLI_DA_GLOSSARIO)
+    .map(([numeroCapitolo]) => numeroCapitolo);
 }
 
 function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
@@ -328,7 +493,15 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
 
   const capitoliPerTitoloOCorpo = [...capitoliPerTitolo, ...capitoliSoloCorpo];
 
-  const capitoliSelezionati = [...capitoliPerTitoloOCorpo];
+  // Quarto canale di selezione, accanto a titolo / corpo / regola citata: i rimandi del Glossario
+  // ufficiale (vedi `capitoliDaGlossario` sopra). Serve a recuperare i capitoli il cui titolo non
+  // condivide vocabolario con la domanda, che gli altri canali non vedono. I capitoli già ammessi
+  // da un altro canale vengono esclusi qui per non finire due volte in `capitoliSelezionati`:
+  // conserverebbero comunque il budget di blocchi del canale che li ha ammessi per primo.
+  const capitoliGlossario = capitoliDaGlossario(dati, paroleChiaveFiltrate, puntoMassimoPerCapitolo)
+    .filter((numero) => !capitoliPerTitoloOCorpo.includes(numero));
+
+  const capitoliSelezionati = [...capitoliPerTitoloOCorpo, ...capitoliGlossario];
 
   // Un numero di regola citato porta con sé il capitolo di appartenenza (es. "510.1c" -> "510"),
   // che aggiungiamo a quelli da esaminare. Il capitolo va però verificato contro l'indice del
@@ -359,6 +532,22 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   const MASSIMO_BLOCCHI_PER_CAPITOLO_SOLO_CORPO = 3;
   const insiemeCapitoliSoloCorpo = new Set(capitoliSoloCorpo);
 
+  // I capitoli agganciati dal Glossario stanno in mezzo fra gli altri due budget: il rimando è
+  // ufficiale, quindi più affidabile di un segnale ricavato dal solo corpo del testo, ma indica il
+  // CAPITOLO e non il blocco, quindi non merita il budget pieno dei capitoli trovati per titolo.
+  const MASSIMO_BLOCCHI_PER_CAPITOLO_DA_GLOSSARIO = 4;
+  const insiemeCapitoliGlossario = new Set(capitoliGlossario);
+
+  function quantiBlocchiPerCapitolo(numeroCapitolo: string): number {
+    if (insiemeCapitoliSoloCorpo.has(numeroCapitolo)) {
+      return MASSIMO_BLOCCHI_PER_CAPITOLO_SOLO_CORPO;
+    }
+    if (insiemeCapitoliGlossario.has(numeroCapitolo)) {
+      return MASSIMO_BLOCCHI_PER_CAPITOLO_DA_GLOSSARIO;
+    }
+    return MASSIMO_BLOCCHI_PER_CAPITOLO;
+  }
+
   function miglioriBlocchiTra(elementi: { blocco: BloccoRegola; punteggio: number }[], quanti: number) {
     return elementi
       .filter((b) => b.punteggio > 0)
@@ -369,7 +558,7 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   const perCapitolo = capitoliSelezionati.flatMap((numeroCapitolo) =>
     miglioriBlocchiTra(
       punteggiBlocchi.filter(({ blocco }) => blocco.numeroCapitolo === numeroCapitolo),
-      insiemeCapitoliSoloCorpo.has(numeroCapitolo) ? MASSIMO_BLOCCHI_PER_CAPITOLO_SOLO_CORPO : MASSIMO_BLOCCHI_PER_CAPITOLO
+      quantiBlocchiPerCapitolo(numeroCapitolo)
     )
   );
 
@@ -410,5 +599,5 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
     return true;
   });
 
-  return assemblaEstratti(senzaDuplicati.map((item) => item.blocco));
+  return assemblaEstratti(conBlocchiPadre(senzaDuplicati.map((item) => item.blocco), dati.blocchi));
 }

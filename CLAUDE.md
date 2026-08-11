@@ -35,7 +35,7 @@ Non esiste una suite di test automatici end-to-end. Il metodo di verifica standa
 
 - `app/page.tsx` — interfaccia utente: chat multi-turno (cronologia dei messaggi utente/giudice), upload/scatto foto del tavolo con anteprima, pulsanti di risposta rapida ai chiarimenti del giudice
 - `app/api/judge/route.ts` — endpoint principale (`POST`), orchestratore di tutta la logica: estrazione parole chiave/carte, ricerca regole, ricerca Scryfall, costruzione del prompt finale e chiamata a Gemini (anche multimodale, se è allegata un'immagine)
-- `lib/rules.ts` — ricerca in entrambi i regolamenti, con due strategie diverse perché i due documenti hanno strutture opposte (vedi "Decisioni architetturali"): `cercaRegolePertinenti()` per le CR (a due fasi: macro capitolo poi micro blocco) e `cercaRegoleTorneo()` per l'MTR (per titolo di sottosezione)
+- `lib/rules.ts` — ricerca in entrambi i regolamenti, con due strategie diverse perché i due documenti hanno strutture opposte (vedi "Decisioni architetturali"): `cercaRegolePertinenti()` per le CR (a due fasi: macro capitolo poi micro blocco) e `cercaRegoleTorneo()` per l'MTR (per titolo di sottosezione). Per le CR i capitoli entrano da quattro canali indipendenti — titolo, corpo, numero di regola citato, e rimandi del Glossario ufficiale (`capitoliDaGlossario`, con voto pesato per rarità del termine) — e i blocchi selezionati si portano dietro la propria regola padre (`conBlocchiPadre`, perché "709.5." enuncia il principio che "709.5j" raffina)
 - `lib/errata.ts` — `cercaErrataPertinenti()`, corrispondenza per nome esatto (case-insensitive) contro `data/errata-locali.json`; vedi "Correzioni manuali" più sotto
 - `lib/scryfall.ts` — interrogazione API Scryfall per riga del tipo, Oracle Text, Rulings e legalità nei formati principali, con cascata di ricerca fuzzy → autocomplete → ricerca testuale (quest'ultima con verifica di somiglianza del nome, per evitare di accettare una carta sbagliata) e cache in memoria del processo
 - `lib/prompts.ts` — testo dei tre prompt inviati a Gemini (FASI A, D, E). Assembla soltanto, non decide nulla: le fasi e il loro ordine stanno in `route.ts`. Il testo è il risultato di molte iterazioni, va modificato con prudenza
@@ -171,7 +171,12 @@ Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge
 - La selezione dei capitoli CR confronta anche la **parola-testa** della locuzione ("triggered *ability*" trova il capitolo "Abilities"), tollerando il plurale in `-ies` che il confronto per prefisso non copre. Costo misurato: il testo CR nel prompt cresce di circa il 22%
 - FASE A estrae ora anche i descrittori di **STATO** di un permanente (unlocked/locked/door, tapped/untapped, flipped, transformed, segnalini), non solo il nome della meccanica: prima la domanda "una stanza con un solo lato aperto" non produceva mai "unlocked"/"door" nelle parole chiave, rendendo impossibile qualsiasi recupero utile a prescindere da come funzioni la ricerca. Verificato dal vivo (log di produzione)
 - Recupero delle CR: un capitolo entra in lista anche a punteggio di titolo zero se il suo corpo ha almeno 3 blocchi indipendentemente pertinenti ("candidatura per corpo", oltre a quella per titolo), con uno spareggio dedicato per i pareggi fra capitoli scorrelati. Aggiunto il caso "Stanza con un solo lato sbloccato" a `scripts/prova-ricerca.mjs`; 10/10 casi passano, nessuna regressione. **Non risolve il problema in modo affidabile al 100%**: vedi "Limite noto" più sotto
-- FASE E: aggiunto un indicatore per il pattern "as long as this permanent doesn't have..." (regola 709.5, Stanze/Room e altre carte con riga del tipo condivisa) — un test in produzione ha mostrato il giudice citare correttamente la 709.5 ma invertirne la conclusione, senza che la FASE E scattasse a ricontrollare perché nessun indicatore esistente compariva in quel testo
+- FASE E: aggiunto un indicatore per il pattern "as long as this permanent doesn't have..." (regola 709.5, Stanze/Room e altre carte con riga del tipo condivisa) — un test in produzione ha mostrato il giudice citare correttamente la 709.5 ma invertirne la conclusione, senza che la FASE E scattasse a ricontrollare perché nessun indicatore esistente compariva in quel testo. Gli apostrofi sono ora normalizzati all'ASCII su entrambi i lati del confronto: il testo CR usa quello tipografico (U+2019) e l'indicatore era scritto in ASCII, una dipendenza che si sarebbe spenta in silenzio a ogni rigenerazione dei dati
+- **Budget di testo del regolamento raddoppiato** (`LIMITE_CARATTERI` 9000 → 18000 per fonte): il tetto precedente era tarato quando si credeva che la quota gratuita fosse vincolata sui token, mentre lo è sulle richieste al giorno. Era diventato il vincolo che decideva sempre quali regole arrivavano al modello — misurato, gli estratti CR occupavano fra l'82% e il 99% del limite in OGNI caso di prova. In più `assemblaEstratti` ora salta il blocco che non ci sta (`continue`) invece di chiudere l'assemblaggio (`break`), che buttava via anche tutti i blocchi corti successivi
+- **Il Glossario ufficiale è collegato al recupero** (`capitoliDaGlossario`): 726 voci, di cui 631 con un rimando "See rule NNN" scritto da Wizards, usate come mappa vocabolario → capitolo con voto pesato per rarità del termine. Vedi "Caso risolto: regola 709.5" per il perché del voto e del peso
+- **I blocchi si portano dietro la regola padre** (`conBlocchiPadre`): le CR sono un albero e recuperare "709.5j" senza "709.5." consegna al modello il rimando senza la regola. È stata la causa decisiva del bug delle Stanze, sfuggita a tutta l'analisi precedente
+- **Rilevatore di citazioni senza fonte** in `route.ts` (`numeriDiRegolaCitati` / `regoleCitateSenzaFonte`): se il verdetto cita un numero di regola che NON compare negli estratti forniti, il modello l'ha preso dalla propria memoria. Finisce in `console.error` e fa scattare la FASE E. Prima la FASE E guardava solo il testo delle regole RECUPERATE, quindi restava inerte proprio quando il recupero aveva fallito, cioè nel caso peggiore
+- Il prompt della FASE D distingue ora "estratti presenti" da "estratti pertinenti": deve dichiarare apertamente quando nessuna fonte affronta direttamente il caso, invece di trattare la presenza di estratti come garanzia che siano quelli giusti
 
 ## Prestazioni misurate in produzione
 
@@ -206,7 +211,7 @@ nel prompt. Aggiungere una fonte non ufficiale per un problema che non abbiamo o
 rischio senza beneficio dimostrato. La sonda resta utile come **strumento diagnostico**: è
 confrontando la spiegazione della community con la nostra che l'errore è emerso.
 
-## Limite noto: recupero intermittente della regola 709.5 (carte Stanza/Room)
+## Caso risolto: recupero della regola 709.5 (carte Stanza/Room)
 
 Domanda reale che ha innescato questo lavoro: «Ho in campo una stanza con un solo lato aperto
 (Roaring Furnace). Quanto è il costo di mana della stanza?» Il giudice rispondeva che il costo si
@@ -214,45 +219,53 @@ combina SEMPRE da entrambi i lati, indipendentemente da quale sia sbloccato — 
 709.5 dice che il lato bloccato non ha il proprio nome, costo di mana né testo finché resta bloccato,
 quindi con un solo lato sbloccato il costo è solo quello di quel lato.
 
-Diagnosticate **due cause distinte**:
+**Stato: risolto.** `npm run prova-ricerca` passa 12/12 (fra cui 3 varianti del caso Stanze, con parole
+chiave mirate, povere e generiche), e la stessa domanda provata dal vivo 3 volte di fila dà 3 risposte
+corrette (prima dei fix: 1 su 3). Restano documentate qui sotto le cause e i tentativi falliti, perché
+la diagnosi è più istruttiva della soluzione.
+
+Diagnosticate **tre cause distinte**, tutte corrette:
 
 1. **FASE A non estraeva mai "unlocked"/"locked"/"door"** dalla domanda, nonostante l'utente avesse
-   scritto esplicitamente "un solo lato aperto" — **risolto** (vedi il prompt in `lib/prompts.ts` e la
-   voce in "Cosa è già stato implementato").
-2. **Anche con quelle parole chiave, la ricerca a due fasi in `lib/rules.ts` fatica a includere il
-   capitolo 709 "Split Cards" nel prompt finale.** Il suo titolo non condivide vocabolario con
-   "Room"/"door"/"unlocked" (stesso problema già noto per "Saga Cards"/"lore counter"), e con parole
-   chiave più generiche prodotte da Gemini in turni reali (es. "mana cost", "Enchantment", "permanent")
-   più capitoli genericamente pertinenti ma non decisivi (202 "Mana Cost and Color", 118 "Costs", 303
-   "Enchantments") pareggiano o vincono per varie metriche, esaurendo `LIMITE_CARATTERI` (9000) prima
-   che tocchi al capitolo 709. **Non risolto in modo affidabile.**
+   scritto esplicitamente "un solo lato aperto" — risolto nel prompt di estrazione in `lib/prompts.ts`.
+2. **Il capitolo 709 "Split Cards" non arrivava negli estratti**, perché il suo titolo non condivide
+   vocabolario con "Room"/"door"/"unlocked" (stesso problema già noto per "Saga Cards"/"lore counter").
+   Risolto dal canale **Glossario** in `lib/rules.ts` (vedi più sotto).
+3. **Anche quando il capitolo 709 ARRIVAVA, la regola decisiva restava fuori.** È la causa sfuggita a
+   tutta l'analisi precedente, e da sola spiegava i fallimenti residui: nell'intero capitolo 709 la
+   parola "Room" compare in **un solo blocco su 22**, la 709.5j (92 caratteri, dice soltanto che le
+   Stanze sono carte divise con designazioni "porta"). La regola che risponde alla domanda è la
+   **709.5.**, che non contiene né "room" né "door": prendeva punteggio zero ed era scartata dal filtro
+   `punteggio > 0`, così il modello riceveva il rimando senza la regola. Risolto dall'**inclusione del
+   blocco padre** (`conBlocchiPadre` in `lib/rules.ts`): le CR sono un albero, "709.5." enuncia il
+   principio e "709.5a".."709.5j" lo raffinano, quindi un figlio selezionato si porta dietro il padre.
 
-**Tentativi fatti e scartati per il punto 2** (per NON riprovarli senza un'idea nuova, non misurata):
+**Tentativi fatti e scartati** (per NON riprovarli senza un'idea nuova, non misurata):
 - Spareggio fra capitoli a pari punteggio di titolo tramite conteggio dei blocchi nel corpo: regredisce
   il caso "Abilità sulla pila indipendente dalla fonte" (un capitolo verboso come 702 "Keyword
   Abilities" batte uno conciso ma decisivo come 113 "Abilities" solo perché ne accumula di più).
 - Spareggio tramite il punteggio del singolo blocco più pertinente del capitolo (invece del conteggio):
   risolve il caso precedente ma produce un NUOVO pareggio casuale con un capitolo scorrelato (es. 205
   "Type Line", che tratta i sottotipi in generale).
-- Agganciare le parole chiave al Glossario ufficiale delle CR (estratto correttamente in
-  `data/regole-compatte.json`, campo `glossario`, non ancora usato dal recupero): funziona per "Door"
-  ma "Room" è polisemico nel glossario stesso (rimanda sia a 709 "Split Cards" sia a 309 "Dungeons",
-  che usa "room" con un significato completamente diverso ed è testualmente simile), aggancia anche
-  309 e ne consuma il budget di caratteri.
+- Agganciare il Glossario **una parola alla volta**: funziona per "Door" ma "Room" è polisemico nel
+  glossario stesso (rimanda sia a 709 "Split Cards" sia a 309 "Dungeons", che usa "room" con un
+  significato completamente diverso ed è testualmente simile), quindi aggancia anche 309 e ne consuma
+  il budget di caratteri. Superato contando i **voti di tutte le parole chiave insieme** (vedi sotto).
 - Cambiare l'ordine di elaborazione fra "capitoli trovati per titolo" e "capitoli trovati per corpo"
   (prima gli uni, poi gli altri, o viceversa), oppure ordinare i blocchi finali per punteggio invece
   che per capitolo di provenienza: ciascuna variante risolve uno dei due casi di prova e rompe l'altro.
 
-**Stato attuale**: i fix parziali (FASE A + candidatura per corpo + indicatore FASE E, tutti applicati)
-sono stabili a 10/10 su `npm run prova-ricerca`, senza regressioni, e restano un miglioramento reale
-per la classe generale di domande su meccaniche con titolo di capitolo poco specifico. Verificato però
-dal vivo in produzione TRE volte dopo tutti i fix, sulla stessa identica domanda: 1 risposta corretta,
-2 ancora sbagliate (una per un fraintendimento della 709.5 pur citata — ora coperto dall'indicatore
-FASE E aggiunto; una perché il capitolo 709 non è proprio arrivato negli estratti quella volta).
-
-Se in futuro si vuole riprendere: il problema di fondo sembra essere l'allocazione del budget di
-caratteri per capitolo, non un altro spareggio — andrebbe probabilmente ripensata l'architettura di
-`assemblaEstratti`/`MASSIMO_BLOCCHI_PER_CAPITOLO` invece di aggiungere altri criteri di ordinamento.
+**Perché il voto pesato del Glossario funziona dove l'aggancio per singola parola falliva.** Il
+Glossario ufficiale ha 726 voci, di cui **631 contengono un rimando esplicito "See rule NNN"** scritto
+da Wizards: è una mappa vocabolario → capitolo, cioè proprio il ponte che manca alla selezione per
+titolo. Con "room" + "door" + "unlocked" il capitolo 709 prende 3 voti contro 1 di 309, e l'ambiguità
+si scioglie da sola senza dover indovinare. Ma con le parole generiche di un turno reale ("mana cost",
+"Enchantment", "permanent", "Room") tutto pareggiava a un voto e 709 finiva **settimo**, perché ogni
+parola generica porta un voto a un capitolo genericamente pertinente (107, 303, 110, 205, 729). Da qui
+il peso per rarità (`pesoDiRarita`): "door" compare in 1 blocco su 3129 e pesa 0,631, "permanent" ne
+tocca 532 e pesa 0,110. **La pesatura per rarità è applicata SOLO al voto del Glossario, non al
+punteggio dei blocchi**, che è tarato su molti casi misurati: estenderla resta un'ipotesi da misurare
+a parte.
 
 ## Banco di prova manuale (scenario benchmark a 3 turni)
 
@@ -272,6 +285,8 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
 - Ottimizzazione velocità — ora misurata (vedi "Prestazioni"): ~10 s a caldo, ~54 s a freddo. I due fronti sono distinti e vanno affrontati separatamente. **A caldo** pesano le 2-3 chiamate Gemini sequenziali: la soluzione proposta è un dizionario locale IT-EN in `lib/dizionario.ts` per saltare la FASE A quando basta — **non applicata**, il file non esiste, e toglierebbe al massimo una delle tre chiamate. **A freddo** la causa dei 44 s di scarto non è nota e i file dati sono già stati esclusi: primo passo sarebbe strumentare i tempi per fase, oppure leggere i log di Vercel
 - Decisione di prodotto da prendere: se il parse JSON della FASE A fallisce, oggi il giudice risponde senza fonti avvisando l'utente. L'alternativa è restituire un errore. Il log c'è già, la decisione no
+- **Estendere la pesatura per rarità al punteggio dei blocchi.** Oggi `pesoDiRarita` è usata SOLO per il voto del Glossario, dove è nuova e isolata. Il punteggio dei blocchi resta binario (+1 per parola chiave), quindi `Land` ed `Enchantment` — iniettate in automatico dalla riga del tipo Scryfall in `route.ts` — pesano quanto `deathtouch`. È la leva più profonda rimasta, ma tocca il cuore di una funzione tarata su molti casi misurati: va fatta misurando `npm run prova-ricerca` a ogni passo, mai a intuito
+- Osservato e non risolto: in una prova a 3 turni il giudice ha dato la conclusione giusta sull'abilità del terzo capitolo di Urza's Saga appoggiandosi a «la pila si risolve in modo indipendente dai permanenti» invece di citare la 113.7a — che **era** fra gli estratti (verificato nei log). Non è una lacuna di recupero ma variabilità del modello nel citare la fonte che ha davanti; se ricapita, il posto in cui intervenire è il prompt della FASE D, non `lib/rules.ts`
 - Semplificazioni individuate e non applicate: eliminare `normalizza()` in `lib/rules.ts` (è solo `toLowerCase()`, e `iniziaUnaParolaDi` normalizza già al proprio interno), estrarre il parsing della FASE A e la validazione dell'immagine da `route.ts` in funzioni dedicate, togliere le tre riassegnazioni morte nel `catch` della FASE A (le variabili sono già inizializzate e da `JSON.parse` non esiste un percorso di assegnazione parziale)
 - Le note di lavoro personali (fra cui `REVISIONE.md`) sono in `note-di-lavoro/`, cartella esclusa da git
 
