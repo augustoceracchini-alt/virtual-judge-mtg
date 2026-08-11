@@ -169,6 +169,9 @@ Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge
 - La cache Scryfall distingue «carta inesistente» (404, memorizzato) da «ricerca fallita» (429/5xx o eccezione, non memorizzato): prima un guasto momentaneo rendeva quella carta introvabile per tutta la vita del processo
 - Il confronto sui numeri di regola citati è normalizzato (`trim` + minuscole) e ignora le stringhe vuote: `"qualsiasi cosa".startsWith("")` è true, e un elemento vuoto avrebbe fatto includere l'intero MTR in ogni domanda
 - La selezione dei capitoli CR confronta anche la **parola-testa** della locuzione ("triggered *ability*" trova il capitolo "Abilities"), tollerando il plurale in `-ies` che il confronto per prefisso non copre. Costo misurato: il testo CR nel prompt cresce di circa il 22%
+- FASE A estrae ora anche i descrittori di **STATO** di un permanente (unlocked/locked/door, tapped/untapped, flipped, transformed, segnalini), non solo il nome della meccanica: prima la domanda "una stanza con un solo lato aperto" non produceva mai "unlocked"/"door" nelle parole chiave, rendendo impossibile qualsiasi recupero utile a prescindere da come funzioni la ricerca. Verificato dal vivo (log di produzione)
+- Recupero delle CR: un capitolo entra in lista anche a punteggio di titolo zero se il suo corpo ha almeno 3 blocchi indipendentemente pertinenti ("candidatura per corpo", oltre a quella per titolo), con uno spareggio dedicato per i pareggi fra capitoli scorrelati. Aggiunto il caso "Stanza con un solo lato sbloccato" a `scripts/prova-ricerca.mjs`; 10/10 casi passano, nessuna regressione. **Non risolve il problema in modo affidabile al 100%**: vedi "Limite noto" più sotto
+- FASE E: aggiunto un indicatore per il pattern "as long as this permanent doesn't have..." (regola 709.5, Stanze/Room e altre carte con riga del tipo condivisa) — un test in produzione ha mostrato il giudice citare correttamente la 709.5 ma invertirne la conclusione, senza che la FASE E scattasse a ricontrollare perché nessun indicatore esistente compariva in quel testo
 
 ## Prestazioni misurate in produzione
 
@@ -202,6 +205,54 @@ era **una nostra nota errata scritta male**, non la mancanza di fonti — e la r
 nel prompt. Aggiungere una fonte non ufficiale per un problema che non abbiamo osservato sarebbe
 rischio senza beneficio dimostrato. La sonda resta utile come **strumento diagnostico**: è
 confrontando la spiegazione della community con la nostra che l'errore è emerso.
+
+## Limite noto: recupero intermittente della regola 709.5 (carte Stanza/Room)
+
+Domanda reale che ha innescato questo lavoro: «Ho in campo una stanza con un solo lato aperto
+(Roaring Furnace). Quanto è il costo di mana della stanza?» Il giudice rispondeva che il costo si
+combina SEMPRE da entrambi i lati, indipendentemente da quale sia sbloccato — sbagliato: la regola
+709.5 dice che il lato bloccato non ha il proprio nome, costo di mana né testo finché resta bloccato,
+quindi con un solo lato sbloccato il costo è solo quello di quel lato.
+
+Diagnosticate **due cause distinte**:
+
+1. **FASE A non estraeva mai "unlocked"/"locked"/"door"** dalla domanda, nonostante l'utente avesse
+   scritto esplicitamente "un solo lato aperto" — **risolto** (vedi il prompt in `lib/prompts.ts` e la
+   voce in "Cosa è già stato implementato").
+2. **Anche con quelle parole chiave, la ricerca a due fasi in `lib/rules.ts` fatica a includere il
+   capitolo 709 "Split Cards" nel prompt finale.** Il suo titolo non condivide vocabolario con
+   "Room"/"door"/"unlocked" (stesso problema già noto per "Saga Cards"/"lore counter"), e con parole
+   chiave più generiche prodotte da Gemini in turni reali (es. "mana cost", "Enchantment", "permanent")
+   più capitoli genericamente pertinenti ma non decisivi (202 "Mana Cost and Color", 118 "Costs", 303
+   "Enchantments") pareggiano o vincono per varie metriche, esaurendo `LIMITE_CARATTERI` (9000) prima
+   che tocchi al capitolo 709. **Non risolto in modo affidabile.**
+
+**Tentativi fatti e scartati per il punto 2** (per NON riprovarli senza un'idea nuova, non misurata):
+- Spareggio fra capitoli a pari punteggio di titolo tramite conteggio dei blocchi nel corpo: regredisce
+  il caso "Abilità sulla pila indipendente dalla fonte" (un capitolo verboso come 702 "Keyword
+  Abilities" batte uno conciso ma decisivo come 113 "Abilities" solo perché ne accumula di più).
+- Spareggio tramite il punteggio del singolo blocco più pertinente del capitolo (invece del conteggio):
+  risolve il caso precedente ma produce un NUOVO pareggio casuale con un capitolo scorrelato (es. 205
+  "Type Line", che tratta i sottotipi in generale).
+- Agganciare le parole chiave al Glossario ufficiale delle CR (estratto correttamente in
+  `data/regole-compatte.json`, campo `glossario`, non ancora usato dal recupero): funziona per "Door"
+  ma "Room" è polisemico nel glossario stesso (rimanda sia a 709 "Split Cards" sia a 309 "Dungeons",
+  che usa "room" con un significato completamente diverso ed è testualmente simile), aggancia anche
+  309 e ne consuma il budget di caratteri.
+- Cambiare l'ordine di elaborazione fra "capitoli trovati per titolo" e "capitoli trovati per corpo"
+  (prima gli uni, poi gli altri, o viceversa), oppure ordinare i blocchi finali per punteggio invece
+  che per capitolo di provenienza: ciascuna variante risolve uno dei due casi di prova e rompe l'altro.
+
+**Stato attuale**: i fix parziali (FASE A + candidatura per corpo + indicatore FASE E, tutti applicati)
+sono stabili a 10/10 su `npm run prova-ricerca`, senza regressioni, e restano un miglioramento reale
+per la classe generale di domande su meccaniche con titolo di capitolo poco specifico. Verificato però
+dal vivo in produzione TRE volte dopo tutti i fix, sulla stessa identica domanda: 1 risposta corretta,
+2 ancora sbagliate (una per un fraintendimento della 709.5 pur citata — ora coperto dall'indicatore
+FASE E aggiunto; una perché il capitolo 709 non è proprio arrivato negli estratti quella volta).
+
+Se in futuro si vuole riprendere: il problema di fondo sembra essere l'allocazione del budget di
+caratteri per capitolo, non un altro spareggio — andrebbe probabilmente ripensata l'architettura di
+`assemblaEstratti`/`MASSIMO_BLOCCHI_PER_CAPITOLO` invece di aggiungere altri criteri di ordinamento.
 
 ## Banco di prova manuale (scenario benchmark a 3 turni)
 
