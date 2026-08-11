@@ -105,6 +105,25 @@ const CASI = [
     statoIniziale: "FALLISCE",
   },
   {
+    // Domanda reale di un utente: costo di mana di una Stanza (Room) sul campo con un solo lato
+    // sbloccato (Roaring Furnace, senza Bottomless Pool). La regola decisiva è 709.5 (radice): finché
+    // un permanente non ha la designazione "lato sbloccato" per un lato, non ha il nome, il costo di
+    // mana né il testo di QUEL lato. Il capitolo 709 si intitola "Split Cards" e non condivide
+    // vocabolario con "Room"/"door"/"unlocked"/"mana value" (stesso problema già noto per "Saga
+    // Cards"/"lore counter" e "Keyword Abilities"/"deathtouch"), e il blocco 709.5 non è mai il più
+    // pertinente del documento su parole chiave comuni come "mana cost"/"locked" (a differenza dei
+    // casi già risolti, dove il blocco decisivo era primo su tutto il documento): resta fuori dalla
+    // rete di sicurezza di 3 blocchi. Il giudice, privo di questa regola, ha risposto di non avere
+    // fonti sufficienti invece di calcolare il valore di mana del solo lato sbloccato.
+    nome: "Stanza (Room) con un solo lato sbloccato",
+    fonte: "CR",
+    paroleChiave: ["Room", "door", "unlocked", "mana cost", "mana value", "locked"],
+    regoleCitate: [],
+    attesi: ["709.5."],
+    nonVoluti: [],
+    statoIniziale: "FALLISCE",
+  },
+  {
     nome: "Corruzione in torneo",
     fonte: "MTR",
     paroleChiave: ["bribery", "wagering", "prize"],
