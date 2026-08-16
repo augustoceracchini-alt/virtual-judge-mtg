@@ -135,7 +135,9 @@ Tieni conto di questa cronologia per rispondere in modo coerente con quanto già
   return promptSistema;
 }
 
-interface InputPromptVerifica {
+// Esportata perché route.ts la nomina nella firma della funzione che esegue la FASE E.
+// Solo un'informazione di tipo: non genera codice eseguibile, e non tocca il testo dei prompt.
+export interface InputPromptVerifica {
   errataPertinenti: string;
   estrattiRegole: string;
   estrattiRegoleTorneo: string;

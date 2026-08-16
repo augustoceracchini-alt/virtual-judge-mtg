@@ -1,6 +1,8 @@
 import { logDebug } from "@/lib/debug";
 
-interface DatiCarta {
+// Esportata perché route.ts la nomina nella firma della funzione che formatta la sezione delle
+// carte del prompt. Solo un'informazione di tipo: non genera codice eseguibile.
+export interface DatiCarta {
   nome: string;
   tipoLinea: string;
   testoOracle: string;

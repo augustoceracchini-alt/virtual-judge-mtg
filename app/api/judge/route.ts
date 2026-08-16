@@ -7,8 +7,13 @@ import {
   getDataEfficaciaRegoleTorneo,
 } from "@/lib/rules";
 import { cercaErrataPertinenti } from "@/lib/errata";
-import { cercaDatiCarta } from "@/lib/scryfall";
-import { costruisciPromptEstrazione, costruisciPromptSistema, costruisciPromptVerifica } from "@/lib/prompts";
+import { cercaDatiCarta, type DatiCarta } from "@/lib/scryfall";
+import {
+  costruisciPromptEstrazione,
+  costruisciPromptSistema,
+  costruisciPromptVerifica,
+  type InputPromptVerifica,
+} from "@/lib/prompts";
 import { logDebug } from "@/lib/debug";
 import { richiestaConsentita } from "@/lib/limite";
 
@@ -154,6 +159,63 @@ function erroreValidazioneImmagine(immagineBase64: unknown, mimeTypeImmagine: un
   }
 
   return null;
+}
+
+// Il blocco "DATI UFFICIALI DELLE CARTE MENZIONATE" del prompt, una scheda per ogni carta trovata
+// su Scryfall. Nessun controllo sulla lista vuota: `[].map(...).join(...)` restituisce già la
+// stringa vuota, che è esattamente il valore atteso quando non è stata trovata nessuna carta.
+function formattaSezioneCarte(datiCarte: DatiCarta[]): string {
+  return datiCarte
+    .map((carta) => {
+      const rulingsTesto =
+        carta.rulings.length > 0
+          ? carta.rulings.slice(0, 8).join("\n")
+          : "Nessun ruling ufficiale disponibile per questa carta.";
+      const legalitaTesto = carta.legalita !== "" ? carta.legalita : "Dati di legalità non disponibili.";
+      // La riga del tipo va MOSTRATA al modello, non solo usata per arricchire le parole chiave
+      // della ricerca (vedi paroleTipoLinea in POST): senza di essa il modello non ha nessuna
+      // fonte per i tipi, i supertipi e i sottotipi della carta, e finisce per dedurli dal testo
+      // Oracle. In una prova reale ha attribuito a Urza's Saga il supertipo "Legendary", che non
+      // ha, citando come fonte "i ruling di Blood Moon": un'invenzione con tanto di attribuzione
+      // falsa. La parola "legendary" era nel prompt solo perché compare come esempio generico
+      // dentro il testo della regola 305.7.
+      const tipoTesto = carta.tipoLinea !== "" ? carta.tipoLinea : "Riga del tipo non disponibile.";
+      return `Carta: ${carta.nome}\nTipo di carta (riga del tipo ufficiale): ${tipoTesto}\nTesto Oracle aggiornato: ${carta.testoOracle}\nLegalità nei formati principali: ${legalitaTesto}\nRulings ufficiali:\n${rulingsTesto}`;
+    })
+    .join("\n\n---\n\n");
+}
+
+// FASE E: il doppio controllo. Restituisce il verdetto verificato, oppure quello ORIGINALE se la
+// verifica fallisce o non produce testo.
+//
+// MODELLO_VERIFICA ha una quota gratuita molto più stretta di MODELLO_STANDARD: se la chiamata
+// fallisce (quota esaurita o qualunque altro errore), il verdetto della FASE D è comunque valido e
+// non va perso. Per questo la chiamata ha un try/catch dedicato, invece di lasciare che l'errore
+// risalga al catch esterno del POST (che restituirebbe un errore generico all'utente, buttando via
+// un verdetto già pronto per un problema di quota che non lo riguarda).
+async function eseguiVerificaFaseE(genAI: GoogleGenerativeAI, input: InputPromptVerifica): Promise<string> {
+  const promptVerifica = costruisciPromptVerifica(input);
+
+  logDebug("[DEBUG] Prompt di verifica (FASE E) inviato a Gemini:", promptVerifica);
+
+  try {
+    const modelVerifica = genAI.getGenerativeModel({ model: MODELLO_VERIFICA });
+    const risultatoVerifica = await modelVerifica.generateContent(promptVerifica);
+    const rispostaVerificata = risultatoVerifica.response.text().trim();
+
+    logDebug("[DEBUG] Risposta della verifica (FASE E):", rispostaVerificata);
+
+    if (rispostaVerificata !== "") {
+      return rispostaVerificata;
+    }
+  } catch (erroreVerifica) {
+    console.error(
+      "Errore nella verifica FASE E (si procede con il verdetto non verificato):",
+      erroreVerifica
+    );
+  }
+
+  return input.risposta;
 }
 
 type RisultatoEstrazioneFaseA = {
@@ -324,26 +386,7 @@ export async function POST(request: NextRequest) {
     const estrattiRegoleTorneo = cercaRegoleTorneo(keywordCombinate, citedRules);
     const dataEfficaciaRegoleTorneo = getDataEfficaciaRegoleTorneo();
 
-    // Nessun controllo sulla lista vuota: `[].map(...).join(...)` restituisce già la stringa
-    // vuota, che è esattamente il valore atteso quando non è stata trovata nessuna carta.
-    const sezioneCarte = datiCarte
-      .map((carta) => {
-        const rulingsTesto =
-          carta.rulings.length > 0
-            ? carta.rulings.slice(0, 8).join("\n")
-            : "Nessun ruling ufficiale disponibile per questa carta.";
-        const legalitaTesto = carta.legalita !== "" ? carta.legalita : "Dati di legalità non disponibili.";
-        // La riga del tipo va MOSTRATA al modello, non solo usata per arricchire le parole chiave
-        // della ricerca (vedi paroleTipoLinea più sopra): senza di essa il modello non ha nessuna
-        // fonte per i tipi, i supertipi e i sottotipi della carta, e finisce per dedurli dal testo
-        // Oracle. In una prova reale ha attribuito a Urza's Saga il supertipo "Legendary", che non
-        // ha, citando come fonte "i ruling di Blood Moon": un'invenzione con tanto di attribuzione
-        // falsa. La parola "legendary" era nel prompt solo perché compare come esempio generico
-        // dentro il testo della regola 305.7.
-        const tipoTesto = carta.tipoLinea !== "" ? carta.tipoLinea : "Riga del tipo non disponibile.";
-        return `Carta: ${carta.nome}\nTipo di carta (riga del tipo ufficiale): ${tipoTesto}\nTesto Oracle aggiornato: ${carta.testoOracle}\nLegalità nei formati principali: ${legalitaTesto}\nRulings ufficiali:\n${rulingsTesto}`;
-      })
-      .join("\n\n---\n\n");
+    const sezioneCarte = formattaSezioneCarte(datiCarte);
 
     // FASE D: costruisci il prompt finale con le fonti autorevoli reali
     const promptSistema = costruisciPromptSistema({
@@ -409,7 +452,7 @@ export async function POST(request: NextRequest) {
       (contieneRegolaCondizionaleComplessa(tutteLeFonti) || citazioniSenzaFonte.length > 0);
 
     if (necessitaVerifica) {
-      const promptVerifica = costruisciPromptVerifica({
+      risposta = await eseguiVerificaFaseE(genAI, {
         errataPertinenti,
         estrattiRegole,
         estrattiRegoleTorneo,
@@ -418,31 +461,6 @@ export async function POST(request: NextRequest) {
         domanda,
         risposta,
       });
-
-      logDebug("[DEBUG] Prompt di verifica (FASE E) inviato a Gemini:", promptVerifica);
-
-      // MODELLO_VERIFICA ha una quota gratuita molto più stretta di MODELLO_STANDARD: se la
-      // chiamata fallisce (quota esaurita o qualunque altro errore), il verdetto della FASE D è
-      // comunque valido e non va perso. Per questo la chiamata ha un try/catch dedicato, invece
-      // di lasciare che l'errore risalga al catch esterno del POST (che restituirebbe un errore
-      // generico all'utente, buttando via un verdetto già pronto per un problema di quota che non
-      // lo riguarda).
-      try {
-        const modelVerifica = genAI.getGenerativeModel({ model: MODELLO_VERIFICA });
-        const risultatoVerifica = await modelVerifica.generateContent(promptVerifica);
-        const rispostaVerificata = risultatoVerifica.response.text().trim();
-
-        logDebug("[DEBUG] Risposta della verifica (FASE E):", rispostaVerificata);
-
-        if (rispostaVerificata !== "") {
-          risposta = rispostaVerificata;
-        }
-      } catch (erroreVerifica) {
-        console.error(
-          "Errore nella verifica FASE E (si procede con il verdetto non verificato):",
-          erroreVerifica
-        );
-      }
     }
 
     logDebug("[DEBUG] Risposta finale (dopo la verifica, prima dell'invio al frontend):", risposta);
