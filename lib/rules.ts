@@ -458,21 +458,49 @@ const MASSIMO_BLOCCHI_RETE_DI_SICUREZZA = 3;
 // nient'altro.
 const MASSIMO_BLOCCHI_SENZA_CAPITOLI = 15;
 
-function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
-  const paroleChiaveFiltrate = paroleChiave.filter((p) => p.length > 2);
+type BloccoConPunteggio = { blocco: BloccoRegola; punteggio: number };
 
-  function calcolaPunteggioBlocco(blocco: BloccoRegola): number {
+// I `quanti` blocchi più pertinenti fra quelli dati, scartando chi non ha nemmeno un punto.
+function miglioriBlocchiTra(elementi: BloccoConPunteggio[], quanti: number): BloccoConPunteggio[] {
+  return elementi
+    .filter((b) => b.punteggio > 0)
+    .sort((a, b) => b.punteggio - a.punteggio)
+    .slice(0, quanti);
+}
+
+// PASSO 1 — Un punteggio di pertinenza per ogni blocco del documento. Calcolato una sola volta e
+// riusato da tutti i passi successivi: per candidare i capitoli in base al corpo, per scegliere i
+// blocchi migliori dentro ciascun capitolo, e per la rete di sicurezza globale.
+function punteggiaBlocchi(
+  dati: DatiRegole,
+  paroleChiaveFiltrate: string[],
+  regoleCitate: string[]
+): BloccoConPunteggio[] {
+  return dati.blocchi.map((blocco) => {
     let punteggio = paroleChiaveFiltrate.filter((parola) => iniziaUnaParolaDi(blocco.testo, parola)).length;
     if (bloccoCitaUnaDelleRegole(blocco.testo, regoleCitate)) {
       punteggio += 10;
     }
-    return punteggio;
-  }
+    return { blocco, punteggio };
+  });
+}
 
-  // Calcolato una sola volta e riusato sia per candidare i capitoli per corpo (sotto), sia per
-  // scegliere i blocchi migliori dentro ciascun capitolo, sia per la rete di sicurezza globale.
-  const punteggiBlocchi = dati.blocchi.map((blocco) => ({ blocco, punteggio: calcolaPunteggioBlocco(blocco) }));
+// L'esito del PASSO 2. Oltre all'elenco dei capitoli da guardare servono i due insiemi, perché il
+// budget di blocchi di un capitolo dipende dal canale che ce l'ha portato (vedi le costanti in cima).
+type CapitoliSelezionati = {
+  numeri: string[];
+  soloCorpo: Set<string>;
+  daGlossario: Set<string>;
+};
 
+// PASSO 2 — Quali capitoli vale la pena guardare. Quattro canali indipendenti, in quest'ordine:
+// titolo, corpo, Glossario ufficiale, e numero di regola citato dall'utente.
+function selezionaCapitoli(
+  dati: DatiRegole,
+  paroleChiaveFiltrate: string[],
+  regoleCitate: string[],
+  punteggiBlocchi: BloccoConPunteggio[]
+): CapitoliSelezionati {
   const blocchiCorpoPerCapitolo = new Map<string, number>();
   // Punteggio del blocco singolarmente più pertinente di ciascun capitolo. Serve da spareggio fra
   // capitoli candidati solo per corpo (vedi sotto): un conteggio di blocchi può pareggiare per puro
@@ -547,32 +575,39 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
     }
   }
 
-  // Quanti blocchi spettano a ciascun capitolo dipende dal canale che ce l'ha portato: i tre
-  // budget sono definiti in cima al file, insieme alla spiegazione del perché sono diversi.
-  const insiemeCapitoliSoloCorpo = new Set(capitoliSoloCorpo);
-  const insiemeCapitoliGlossario = new Set(capitoliGlossario);
+  return {
+    numeri: capitoliSelezionati,
+    soloCorpo: new Set(capitoliSoloCorpo),
+    daGlossario: new Set(capitoliGlossario),
+  };
+}
 
-  function quantiBlocchiPerCapitolo(numeroCapitolo: string): number {
-    if (insiemeCapitoliSoloCorpo.has(numeroCapitolo)) {
-      return MASSIMO_BLOCCHI_PER_CAPITOLO_SOLO_CORPO;
-    }
-    if (insiemeCapitoliGlossario.has(numeroCapitolo)) {
-      return MASSIMO_BLOCCHI_PER_CAPITOLO_DA_GLOSSARIO;
-    }
-    return MASSIMO_BLOCCHI_PER_CAPITOLO;
+// Quanti blocchi spettano a un capitolo: dipende dal canale che ce l'ha portato. I tre budget sono
+// definiti in cima al file, insieme alla spiegazione del perché sono diversi fra loro.
+function quantiBlocchiPerCapitolo(numeroCapitolo: string, capitoli: CapitoliSelezionati): number {
+  if (capitoli.soloCorpo.has(numeroCapitolo)) {
+    return MASSIMO_BLOCCHI_PER_CAPITOLO_SOLO_CORPO;
   }
-
-  function miglioriBlocchiTra(elementi: { blocco: BloccoRegola; punteggio: number }[], quanti: number) {
-    return elementi
-      .filter((b) => b.punteggio > 0)
-      .sort((a, b) => b.punteggio - a.punteggio)
-      .slice(0, quanti);
+  if (capitoli.daGlossario.has(numeroCapitolo)) {
+    return MASSIMO_BLOCCHI_PER_CAPITOLO_DA_GLOSSARIO;
   }
+  return MASSIMO_BLOCCHI_PER_CAPITOLO;
+}
 
-  const perCapitolo = capitoliSelezionati.flatMap((numeroCapitolo) =>
+// PASSO 3 — I blocchi da consegnare al modello: i migliori di ciascun capitolo selezionato, più la
+// rete di sicurezza globale, senza duplicati e nell'ordine in cui devono sopravvivere al limite di
+// caratteri.
+function raccogliBlocchi(
+  punteggiBlocchi: BloccoConPunteggio[],
+  capitoli: CapitoliSelezionati
+): BloccoRegola[] {
+  // Prende i migliori blocchi PER CIASCUN capitolo selezionato (invece di un unico taglio
+  // "top N assoluti" su tutti i capitoli insieme), così un capitolo poco chiacchierone ma decisivo
+  // non viene escluso solo perché un altro fra quelli scelti ne ha tanti di punteggio pari.
+  const perCapitolo = capitoli.numeri.flatMap((numeroCapitolo) =>
     miglioriBlocchiTra(
       punteggiBlocchi.filter(({ blocco }) => blocco.numeroCapitolo === numeroCapitolo),
-      quantiBlocchiPerCapitolo(numeroCapitolo)
+      quantiBlocchiPerCapitolo(numeroCapitolo, capitoli)
     )
   );
 
@@ -590,20 +625,34 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   // risultati, e allora può prenderne di più: da sola non deve spartire il limite di caratteri
   // con nient'altro. I due valori, e il perché di quei numeri, sono in cima al file.
   const quantiGlobali =
-    capitoliSelezionati.length > 0 ? MASSIMO_BLOCCHI_RETE_DI_SICUREZZA : MASSIMO_BLOCCHI_SENZA_CAPITOLI;
+    capitoli.numeri.length > 0 ? MASSIMO_BLOCCHI_RETE_DI_SICUREZZA : MASSIMO_BLOCCHI_SENZA_CAPITOLI;
   const globali = miglioriBlocchiTra(punteggiBlocchi, quantiGlobali);
 
   // I blocchi trovati globalmente vanno per primi: sono i più pertinenti in assoluto, e solo
   // stando in testa sopravvivono al limite di caratteri applicato da assemblaEstratti invece di
   // essere accodati e troncati via.
   const visti = new Set<BloccoRegola>();
-  const senzaDuplicati = [...globali, ...perCapitolo].filter(({ blocco }) => {
-    if (visti.has(blocco)) {
-      return false;
-    }
-    visti.add(blocco);
-    return true;
-  });
+  return [...globali, ...perCapitolo]
+    .map((item) => item.blocco)
+    .filter((blocco) => {
+      if (visti.has(blocco)) {
+        return false;
+      }
+      visti.add(blocco);
+      return true;
+    });
+}
 
-  return assemblaEstratti(conBlocchiPadre(senzaDuplicati.map((item) => item.blocco), dati.blocchi));
+// Cerca nel documento i blocchi di regolamento più pertinenti e li assembla in un unico testo,
+// entro il limite di caratteri. Tre passi, in quest'ordine: dai un punteggio a ogni blocco, scegli
+// i capitoli da guardare, raccogli i blocchi migliori. In coda, ogni blocco selezionato si porta
+// dietro la propria regola padre (vedi conBlocchiPadre).
+function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
+  const paroleChiaveFiltrate = paroleChiave.filter((p) => p.length > 2);
+
+  const punteggiBlocchi = punteggiaBlocchi(dati, paroleChiaveFiltrate, regoleCitate);
+  const capitoli = selezionaCapitoli(dati, paroleChiaveFiltrate, regoleCitate, punteggiBlocchi);
+  const blocchi = raccogliBlocchi(punteggiBlocchi, capitoli);
+
+  return assemblaEstratti(conBlocchiPadre(blocchi, dati.blocchi));
 }
