@@ -208,17 +208,12 @@ export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]
       titolo !== "" && paroleChiaveFiltrate.some((parola) => iniziaUnaParolaDi(titolo, parola));
     const esplicitamenteCitato = bloccoCitaUnaDelleRegole(blocco.testo, regoleCitate);
 
-    let punteggio = 0;
-    for (const parola of paroleChiaveFiltrate) {
-      // Confronto per parola anche nel corpo, non solo nel titolo: il corpo usava ancora una
-      // `includes` grezza, rimasta indietro rispetto alla correzione applicata alle CR. Qui non
-      // decide l'ammissione (quella dipende dal titolo o dalla citazione esplicita) ma decide
-      // l'ORDINE, e l'ordine conta: assemblaEstratti tronca a LIMITE_CARATTERI, quindi un blocco
-      // spinto in basso da punti falsi come "tap" dentro "untapped" può finire tagliato via.
-      if (iniziaUnaParolaDi(blocco.testo, parola)) {
-        punteggio += 1;
-      }
-    }
+    // Confronto per parola anche nel corpo, non solo nel titolo: il corpo usava ancora una
+    // `includes` grezza, rimasta indietro rispetto alla correzione applicata alle CR. Qui non
+    // decide l'ammissione (quella dipende dal titolo o dalla citazione esplicita) ma decide
+    // l'ORDINE, e l'ordine conta: assemblaEstratti tronca a LIMITE_CARATTERI, quindi un blocco
+    // spinto in basso da punti falsi come "tap" dentro "untapped" può finire tagliato via.
+    let punteggio = paroleChiaveFiltrate.filter((parola) => iniziaUnaParolaDi(blocco.testo, parola)).length;
     if (argomentoPertinente) {
       punteggio += PUNTI_ARGOMENTO_PERTINENTE;
     }
@@ -467,12 +462,7 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   const paroleChiaveFiltrate = paroleChiave.filter((p) => p.length > 2);
 
   function calcolaPunteggioBlocco(blocco: BloccoRegola): number {
-    let punteggio = 0;
-    for (const parola of paroleChiaveFiltrate) {
-      if (iniziaUnaParolaDi(blocco.testo, parola)) {
-        punteggio += 1;
-      }
-    }
+    let punteggio = paroleChiaveFiltrate.filter((parola) => iniziaUnaParolaDi(blocco.testo, parola)).length;
     if (bloccoCitaUnaDelleRegole(blocco.testo, regoleCitate)) {
       punteggio += 10;
     }
@@ -507,12 +497,9 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   }
 
   const punteggiCapitoli = dati.capitoli.map((capitolo) => {
-    let punteggioTitolo = 0;
-    for (const parola of paroleChiaveFiltrate) {
-      if (titoloCapitoloPertinente(capitolo.titolo, parola)) {
-        punteggioTitolo += 1;
-      }
-    }
+    const punteggioTitolo = paroleChiaveFiltrate.filter((parola) =>
+      titoloCapitoloPertinente(capitolo.titolo, parola)
+    ).length;
     return {
       capitolo,
       punteggioTitolo,
