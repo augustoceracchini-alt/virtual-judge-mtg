@@ -67,28 +67,30 @@ function normalizzaCronologia(valore: unknown): MessaggioCronologia[] {
   return messaggiSelezionati;
 }
 
-// Indica se il testo delle regole citate contiene il tipo di regola condizionale a più
-// clausole (spesso un'azione basata sullo stato con un confronto numerico) su cui il modello
-// ha già mostrato di sbagliare più facilmente il ragionamento passo-passo (es. la regola 714.4
-// sul sacrificio delle Saghe). Quando è così, la risposta viene fatta ricontrollare da un
-// secondo passaggio dedicato (FASE E) prima di essere inviata all'utente.
+// Indicatori testuali del tipo di regola condizionale a più clausole (spesso un'azione basata
+// sullo stato con un confronto numerico) su cui il modello ha già mostrato di sbagliare più
+// facilmente il ragionamento passo-passo (es. la regola 714.4 sul sacrificio delle Saghe).
+const INDICATORI_REGOLA_CONDIZIONALE = [
+  "state-based action",
+  "greater than or equal",
+  "less than or equal",
+  "equal to or greater",
+  "equal to or less",
+  // Copre anche "and it isn't": qualsiasi testo che contenga quella forma contiene già questa.
+  " and it is",
+  "if the number of",
+  // Regola 709.5 (Stanze/Room e altre carte con riga del tipo condivisa): "As long as this
+  // permanent doesn't have [designazione], it doesn't have [caratteristica]". Caso reale: il
+  // giudice ha citato correttamente la 709.5 ma ne ha invertito la conclusione (ha detto che il
+  // costo di mana si combina SEMPRE, quando la regola dice il contrario per il lato bloccato), e
+  // la FASE E non scattava perché nessun indicatore esistente compare in questo testo.
+  "as long as this permanent doesn't have",
+];
+
+// Indica se il testo delle regole citate contiene uno di quegli indicatori. Quando è così, la
+// risposta viene fatta ricontrollare da un secondo passaggio dedicato (FASE E) prima di essere
+// inviata all'utente.
 function contieneRegolaCondizionaleComplessa(testoRegole: string): boolean {
-  const indicatori = [
-    "state-based action",
-    "greater than or equal",
-    "less than or equal",
-    "equal to or greater",
-    "equal to or less",
-    // Copre anche "and it isn't": qualsiasi testo che contenga quella forma contiene già questa.
-    " and it is",
-    "if the number of",
-    // Regola 709.5 (Stanze/Room e altre carte con riga del tipo condivisa): "As long as this
-    // permanent doesn't have [designazione], it doesn't have [caratteristica]". Caso reale: il
-    // giudice ha citato correttamente la 709.5 ma ne ha invertito la conclusione (ha detto che il
-    // costo di mana si combina SEMPRE, quando la regola dice il contrario per il lato bloccato), e
-    // la FASE E non scattava perché nessun indicatore esistente compare in questo testo.
-    "as long as this permanent doesn't have",
-  ];
   // Gli apostrofi vengono uniformati all'ASCII su ENTRAMBI i lati del confronto. Il testo ufficiale
   // delle CR usa l'apostrofo tipografico (U+2019), gli indicatori qui sopra sono scritti in ASCII:
   // senza questa normalizzazione l'indicatore della 709.5 non troverebbe mai il proprio testo. La
@@ -96,7 +98,7 @@ function contieneRegolaCondizionaleComplessa(testoRegole: string): boolean {
   // data/regole-compatte.json normalizzasse la punteggiatura, o che qualcuno riscrivesse un
   // indicatore copiandolo da un'altra fonte, per spegnere il controllo in silenzio.
   const testoNormalizzato = testoRegole.toLowerCase().replace(/[‘’]/g, "'");
-  return indicatori.some((indicatore) => testoNormalizzato.includes(indicatore));
+  return INDICATORI_REGOLA_CONDIZIONALE.some((indicatore) => testoNormalizzato.includes(indicatore));
 }
 
 // Estrae i numeri di regola citati in un testo, nella forma usata dalle Comprehensive Rules
@@ -296,7 +298,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    logDebug("[DEBUG] Risultati ricerca carte:", JSON.stringify(datiCarte.map((c) => (c ? c.nome : null))));
+    logDebug("[DEBUG] Risultati ricerca carte:", JSON.stringify(datiCarte.map((c) => c.nome)));
 
     // FASE C: cerca i frammenti di regole pertinenti nel testo ufficiale (nessun costo in token).
     // Le Comprehensive Rules locali sono la fonte primaria da controllare per prima: vengono
@@ -322,27 +324,26 @@ export async function POST(request: NextRequest) {
     const estrattiRegoleTorneo = cercaRegoleTorneo(keywordCombinate, citedRules);
     const dataEfficaciaRegoleTorneo = getDataEfficaciaRegoleTorneo();
 
-    let sezioneCarte = "";
-    if (datiCarte.length > 0) {
-      sezioneCarte = datiCarte
-        .map((carta) => {
-          const rulingsTesto =
-            carta.rulings.length > 0
-              ? carta.rulings.slice(0, 8).join("\n")
-              : "Nessun ruling ufficiale disponibile per questa carta.";
-          const legalitaTesto = carta.legalita !== "" ? carta.legalita : "Dati di legalità non disponibili.";
-          // La riga del tipo va MOSTRATA al modello, non solo usata per arricchire le parole chiave
-          // della ricerca (vedi paroleTipoLinea più sotto): senza di essa il modello non ha nessuna
-          // fonte per i tipi, i supertipi e i sottotipi della carta, e finisce per dedurli dal testo
-          // Oracle. In una prova reale ha attribuito a Urza's Saga il supertipo "Legendary", che non
-          // ha, citando come fonte "i ruling di Blood Moon": un'invenzione con tanto di attribuzione
-          // falsa. La parola "legendary" era nel prompt solo perché compare come esempio generico
-          // dentro il testo della regola 305.7.
-          const tipoTesto = carta.tipoLinea !== "" ? carta.tipoLinea : "Riga del tipo non disponibile.";
-          return `Carta: ${carta.nome}\nTipo di carta (riga del tipo ufficiale): ${tipoTesto}\nTesto Oracle aggiornato: ${carta.testoOracle}\nLegalità nei formati principali: ${legalitaTesto}\nRulings ufficiali:\n${rulingsTesto}`;
-        })
-        .join("\n\n---\n\n");
-    }
+    // Nessun controllo sulla lista vuota: `[].map(...).join(...)` restituisce già la stringa
+    // vuota, che è esattamente il valore atteso quando non è stata trovata nessuna carta.
+    const sezioneCarte = datiCarte
+      .map((carta) => {
+        const rulingsTesto =
+          carta.rulings.length > 0
+            ? carta.rulings.slice(0, 8).join("\n")
+            : "Nessun ruling ufficiale disponibile per questa carta.";
+        const legalitaTesto = carta.legalita !== "" ? carta.legalita : "Dati di legalità non disponibili.";
+        // La riga del tipo va MOSTRATA al modello, non solo usata per arricchire le parole chiave
+        // della ricerca (vedi paroleTipoLinea più sopra): senza di essa il modello non ha nessuna
+        // fonte per i tipi, i supertipi e i sottotipi della carta, e finisce per dedurli dal testo
+        // Oracle. In una prova reale ha attribuito a Urza's Saga il supertipo "Legendary", che non
+        // ha, citando come fonte "i ruling di Blood Moon": un'invenzione con tanto di attribuzione
+        // falsa. La parola "legendary" era nel prompt solo perché compare come esempio generico
+        // dentro il testo della regola 305.7.
+        const tipoTesto = carta.tipoLinea !== "" ? carta.tipoLinea : "Riga del tipo non disponibile.";
+        return `Carta: ${carta.nome}\nTipo di carta (riga del tipo ufficiale): ${tipoTesto}\nTesto Oracle aggiornato: ${carta.testoOracle}\nLegalità nei formati principali: ${legalitaTesto}\nRulings ufficiali:\n${rulingsTesto}`;
+      })
+      .join("\n\n---\n\n");
 
     // FASE D: costruisci il prompt finale con le fonti autorevoli reali
     const promptSistema = costruisciPromptSistema({
@@ -384,10 +385,12 @@ export async function POST(request: NextRequest) {
     // è quest'ultimo a reggere il verdetto.
     const tutteLeFonti = `${estrattiRegole}\n${estrattiRegoleTorneo}`;
 
-    // Una richiesta di chiarimenti non è un verdetto: non ha senso cercarvi citazioni da verificare.
-    const citazioniSenzaFonte = eRichiestaDiChiarimenti(risposta)
-      ? []
-      : regoleCitateSenzaFonte(risposta, tutteLeFonti);
+    // Una richiesta di chiarimenti non è un verdetto: non ha senso cercarvi citazioni da verificare,
+    // né sottoporla al doppio controllo. Serve a entrambe le cose, quindi si calcola una volta sola
+    // (qui `risposta` è ancora quella della FASE D: la FASE E può riassegnarla, ma solo più sotto).
+    const chiedeChiarimenti = eRichiestaDiChiarimenti(risposta);
+
+    const citazioniSenzaFonte = chiedeChiarimenti ? [] : regoleCitateSenzaFonte(risposta, tutteLeFonti);
 
     if (citazioniSenzaFonte.length > 0) {
       console.error(
@@ -402,7 +405,7 @@ export async function POST(request: NextRequest) {
     // doppio controllo resta inerte proprio nel caso peggiore, quello in cui il modello sta
     // rispondendo a memoria. Una citazione senza fonte è il segnale che quel caso si è verificato.
     const necessitaVerifica =
-      !eRichiestaDiChiarimenti(risposta) &&
+      !chiedeChiarimenti &&
       (contieneRegolaCondizionaleComplessa(tutteLeFonti) || citazioniSenzaFonte.length > 0);
 
     if (necessitaVerifica) {
