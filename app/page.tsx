@@ -116,6 +116,12 @@ export default function Home() {
     const cronologiaPrecedente = cronologia;
     const conversazioneDiPartenza = conversazioneCorrenteRef.current;
 
+    // La conversazione può essere azzerata mentre la richiesta è ancora in volo: in quel caso la
+    // risposta riguarda una domanda che non è più sullo schermo e va scartata. Il controllo serve
+    // in tre punti diversi (risposta ricevuta, errore di rete, chiusura del caricamento), quindi
+    // ha un nome invece di essere ripetuto tre volte.
+    const eAncoraLaStessaConversazione = () => conversazioneCorrenteRef.current === conversazioneDiPartenza;
+
     setCronologia((prev) => [...prev, { ruolo: "utente", testo: testoMessaggio }]);
     setMessaggioCorrente("");
     setCaricamento(true);
@@ -141,9 +147,7 @@ export default function Home() {
 
       const dati = await response.json();
 
-      // La conversazione è stata azzerata mentre la richiesta era in volo: questa risposta
-      // riguarda una domanda che non è più sullo schermo e va scartata.
-      if (conversazioneCorrenteRef.current !== conversazioneDiPartenza) {
+      if (!eAncoraLaStessaConversazione()) {
         return;
       }
 
@@ -158,13 +162,13 @@ export default function Home() {
         handleRimuoviFoto();
       }
     } catch (err) {
-      if (conversazioneCorrenteRef.current !== conversazioneDiPartenza) {
+      if (!eAncoraLaStessaConversazione()) {
         return;
       }
       console.error("Errore di rete durante la richiesta al giudice:", err);
       setErrore("Impossibile contattare il server. Controlla la connessione.");
     } finally {
-      if (conversazioneCorrenteRef.current === conversazioneDiPartenza) {
+      if (eAncoraLaStessaConversazione()) {
         setCaricamento(false);
       }
     }
