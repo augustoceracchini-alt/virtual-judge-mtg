@@ -390,6 +390,79 @@ function capitoliDaGlossario(
     .map(([numeroCapitolo]) => numeroCapitolo);
 }
 
+// --- Le manopole della selezione dei capitoli e dei blocchi delle Comprehensive Rules ---
+//
+// Stanno tutte qui, accanto a LIMITE_CARATTERI e MASSIMO_CAPITOLI_DA_GLOSSARIO, invece che sparse
+// dentro cercaBlocchiPertinenti: ognuna è tarata su casi misurati, e averle in un punto solo evita
+// di doverle rincorrere lungo duecento righe di funzione prima di poterne cambiare una.
+
+// Quanti punti deve avere un singolo blocco perché il suo capitolo venga considerato "pertinente
+// nel corpo": una sola parola chiave comune (punteggio 1, es. "cost") non basta, altrimenti
+// qualunque capitolo che nomina di sfuggita un termine generico entrerebbe in lista.
+const SOGLIA_PUNTEGGIO_BLOCCO_PER_CORPO = 2;
+
+// Quanti blocchi con quel punteggio minimo deve avere un capitolo per essere candidato SOLO in
+// base al corpo (titolo escluso). Misurato sul caso "Stanza con un solo lato sbloccato" (vedi
+// scripts/prova-ricerca.mjs): il capitolo 709 "Split Cards" contiene la regola 709.5 che risponde
+// alla domanda (il costo di mana di una Stanza dipende da quale lato è sbloccato), ma il titolo
+// non condivide vocabolario con "Room"/"door"/"unlocked"/"mana value" (lo stesso problema già
+// noto per "Saga Cards"/"lore counter" e "Keyword Abilities"/"deathtouch") e nessun suo blocco
+// è mai il più pertinente in assoluto sul documento, quindi restava fuori anche dalla rete di
+// sicurezza globale. Il capitolo però ha SEI blocchi diversi che citano "door", "unlocked",
+// "mana cost" o "locked": un segnale di pertinenza aggregato sul corpo, anche senza un titolo
+// che lo dica. La soglia 3 è scelta per escludere capitoli con un solo blocco fuori tema (es.
+// "116 Special Actions", che cita di sfuggita "locked" una volta sola) pur restando sotto le sei
+// occorrenze reali del caso misurato.
+const MINIMO_BLOCCHI_CORPO_PER_CANDIDATURA = 3;
+
+// Il titolo resta il criterio principale della selezione euristica (è il segnale più affidabile
+// fra quelli non certi, misurato su molti casi).
+const MASSIMO_CAPITOLI_PER_TITOLO = 4;
+
+// I candidati SOLO per corpo (punteggio di titolo zero) hanno un budget di capitoli separato,
+// più piccolo, invece di competere con quelli per titolo per lo stesso taglio. Motivo: quando più
+// capitoli scorrelati pareggiano per puro caso sul punto massimo (vedi `puntoMassimoPerCapitolo`
+// dentro cercaBlocchiPertinenti), un taglio unico ammette solo IL PRIMO in ordine di documento, ed
+// è un caso reale, non ipotetico — misurato sul caso "Stanza con un solo lato sbloccato": con le
+// parole chiave vere della FASE A, il capitolo 709 "Split Cards" pareggia a punteggio massimo 5 con
+// "205 Type Line" (che tratta i sottotipi di incantesimo in generale, non le Stanze in particolare),
+// e un solo slot ammetteva 205 ma non 709 solo perché "205" precede "709" nel documento.
+// Ammettendone due entrano entrambi, senza dover indovinare quale dei due pareggianti sia quello vero.
+const MASSIMO_CAPITOLI_SOLO_CORPO = 2;
+
+// Quanti blocchi spettano a ciascun capitolo selezionato, a seconda del canale che ce l'ha portato.
+// Il taglio è PER CAPITOLO e non un unico "top N assoluti" su tutti i capitoli insieme, così un
+// capitolo poco chiacchierone ma decisivo (es. 714 "Saga Cards" con un solo blocco davvero
+// pertinente) non viene escluso solo perché un altro capitolo tra quelli scelti (es. 305 "Lands",
+// con molti più blocchi) ne ha tanti con punteggio pari o superiore.
+const MASSIMO_BLOCCHI_PER_CAPITOLO = 6;
+
+// I capitoli ammessi solo per corpo hanno diritto a meno blocchi ciascuno dei capitoli trovati per
+// titolo (un segnale più affidabile): quando più di uno di questi capitoli viene ammesso (vedi
+// `capitoliSoloCorpo` dentro cercaBlocchiPertinenti), un budget pieno per ciascuno esaurirebbe
+// comunque LIMITE_CARATTERI prima che tocchi al secondo, vanificando il motivo per cui se ne
+// ammette più di uno.
+const MASSIMO_BLOCCHI_PER_CAPITOLO_SOLO_CORPO = 3;
+
+// I capitoli agganciati dal Glossario stanno in mezzo fra gli altri due budget: il rimando è
+// ufficiale, quindi più affidabile di un segnale ricavato dal solo corpo del testo, ma indica il
+// CAPITOLO e non il blocco, quindi non merita il budget pieno dei capitoli trovati per titolo.
+const MASSIMO_BLOCCHI_PER_CAPITOLO_DA_GLOSSARIO = 4;
+
+// Quanti blocchi prende la ricerca globale di sicurezza quando dei capitoli sono già stati
+// selezionati. Il valore 3 è tenuto basso deliberatamente. Misurato con scripts/prova-ricerca.mjs:
+// qualsiasi valore da 1 a 8 fa passare esattamente gli stessi casi, ma il testo complessivo inviato
+// a Gemini cresce del 32% passando da 1 a 8 (40007 -> 52838 caratteri sui casi di prova). I blocchi
+// in più non comprano niente di misurabile e consumano il limite di caratteri a scapito dei blocchi
+// dei capitoli selezionati. Non è 1 solo per lasciare un margine: nei due casi misurati il blocco
+// decisivo era primo in classifica, ma non c'è garanzia che lo sia sempre.
+const MASSIMO_BLOCCHI_RETE_DI_SICUREZZA = 3;
+
+// Quando invece nessun capitolo è stato selezionato, la ricerca globale è l'unica fonte di
+// risultati e può prenderne molti di più: da sola non deve spartire il limite di caratteri con
+// nient'altro.
+const MASSIMO_BLOCCHI_SENZA_CAPITOLI = 15;
+
 function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
   const paroleChiaveFiltrate = paroleChiave.filter((p) => p.length > 2);
 
@@ -409,24 +482,6 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   // Calcolato una sola volta e riusato sia per candidare i capitoli per corpo (sotto), sia per
   // scegliere i blocchi migliori dentro ciascun capitolo, sia per la rete di sicurezza globale.
   const punteggiBlocchi = dati.blocchi.map((blocco) => ({ blocco, punteggio: calcolaPunteggioBlocco(blocco) }));
-
-  // Quanti punti deve avere un singolo blocco perché il suo capitolo venga considerato "pertinente
-  // nel corpo": una sola parola chiave comune (punteggio 1, es. "cost") non basta, altrimenti
-  // qualunque capitolo che nomina di sfuggita un termine generico entrerebbe in lista.
-  const SOGLIA_PUNTEGGIO_BLOCCO_PER_CORPO = 2;
-  // Quanti blocchi con quel punteggio minimo deve avere un capitolo per essere candidato SOLO in
-  // base al corpo (titolo escluso). Misurato sul caso "Stanza con un solo lato sbloccato" (vedi
-  // scripts/prova-ricerca.mjs): il capitolo 709 "Split Cards" contiene la regola 709.5 che risponde
-  // alla domanda (il costo di mana di una Stanza dipende da quale lato è sbloccato), ma il titolo
-  // non condivide vocabolario con "Room"/"door"/"unlocked"/"mana value" (lo stesso problema già
-  // noto per "Saga Cards"/"lore counter" e "Keyword Abilities"/"deathtouch") e nessun suo blocco
-  // è mai il più pertinente in assoluto sul documento, quindi restava fuori anche dalla rete di
-  // sicurezza globale. Il capitolo però ha SEI blocchi diversi che citano "door", "unlocked",
-  // "mana cost" o "locked": un segnale di pertinenza aggregato sul corpo, anche senza un titolo
-  // che lo dica. La soglia 3 è scelta per escludere capitoli con un solo blocco fuori tema (es.
-  // "116 Special Actions", che cita di sfuggita "locked" una volta sola) pur restando sotto le sei
-  // occorrenze reali del caso misurato.
-  const MINIMO_BLOCCHI_CORPO_PER_CANDIDATURA = 3;
 
   const blocchiCorpoPerCapitolo = new Map<string, number>();
   // Punteggio del blocco singolarmente più pertinente di ciascun capitolo. Serve da spareggio fra
@@ -466,25 +521,12 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
     };
   });
 
-  // Il titolo resta il criterio principale della selezione euristica (è il segnale più affidabile
-  // fra quelli non certi, misurato su molti casi).
-  const MASSIMO_CAPITOLI_PER_TITOLO = 4;
   const capitoliPerTitolo = punteggiCapitoli
     .filter((c) => c.punteggioTitolo > 0)
     .sort((a, b) => b.punteggioTitolo - a.punteggioTitolo)
     .slice(0, MASSIMO_CAPITOLI_PER_TITOLO)
     .map((c) => c.capitolo.numero);
 
-  // I candidati SOLO per corpo (punteggio di titolo zero) hanno un budget di capitoli separato,
-  // più piccolo, invece di competere con quelli per titolo per lo stesso taglio. Motivo: quando più
-  // capitoli scorrelati pareggiano per puro caso sul punto massimo (vedi `puntoMassimoPerCapitolo`
-  // sopra), un taglio unico ammette solo IL PRIMO in ordine di documento, ed è un caso reale, non
-  // ipotetico — misurato sul caso "Stanza con un solo lato sbloccato": con le parole chiave vere
-  // della FASE A, il capitolo 709 "Split Cards" pareggia a punteggio massimo 5 con "205 Type Line"
-  // (che tratta i sottotipi di incantesimo in generale, non le Stanze in particolare), e un solo
-  // slot ammetteva 205 ma non 709 solo perché "205" precede "709" nel documento. Ammettendone due
-  // entrano entrambi, senza dover indovinare quale dei due pareggianti sia quello vero.
-  const MASSIMO_CAPITOLI_SOLO_CORPO = 2;
   const capitoliSoloCorpo = punteggiCapitoli
     .filter((c) => c.punteggioTitolo === 0 && c.blocchiCorpo >= MINIMO_BLOCCHI_CORPO_PER_CANDIDATURA)
     .sort((a, b) => b.puntoMassimo - a.puntoMassimo)
@@ -518,24 +560,9 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
     }
   }
 
-  // Prende i migliori blocchi PER CIASCUN capitolo selezionato (invece di un unico taglio
-  // "top N assoluti" su tutti i capitoli insieme), così un capitolo poco chiacchierone ma
-  // decisivo (es. 714 "Saga Cards" con un solo blocco davvero pertinente) non viene escluso
-  // solo perché un altro capitolo tra quelli scelti (es. 305 "Lands", con molti più blocchi)
-  // ne ha tanti con punteggio pari o superiore.
-  const MASSIMO_BLOCCHI_PER_CAPITOLO = 6;
-
-  // I capitoli ammessi solo per corpo hanno diritto a meno blocchi ciascuno dei capitoli trovati per
-  // titolo (un segnale più affidabile): quando più di uno di questi capitoli viene ammesso (vedi
-  // `capitoliSoloCorpo` sopra), un budget pieno per ciascuno esaurirebbe comunque LIMITE_CARATTERI
-  // prima che tocchi al secondo, vanificando il motivo per cui se ne ammette più di uno.
-  const MASSIMO_BLOCCHI_PER_CAPITOLO_SOLO_CORPO = 3;
+  // Quanti blocchi spettano a ciascun capitolo dipende dal canale che ce l'ha portato: i tre
+  // budget sono definiti in cima al file, insieme alla spiegazione del perché sono diversi.
   const insiemeCapitoliSoloCorpo = new Set(capitoliSoloCorpo);
-
-  // I capitoli agganciati dal Glossario stanno in mezzo fra gli altri due budget: il rimando è
-  // ufficiale, quindi più affidabile di un segnale ricavato dal solo corpo del testo, ma indica il
-  // CAPITOLO e non il blocco, quindi non merita il budget pieno dei capitoli trovati per titolo.
-  const MASSIMO_BLOCCHI_PER_CAPITOLO_DA_GLOSSARIO = 4;
   const insiemeCapitoliGlossario = new Set(capitoliGlossario);
 
   function quantiBlocchiPerCapitolo(numeroCapitolo: string): number {
@@ -574,15 +601,7 @@ function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regole
   //
   // Quando invece nessun capitolo è stato selezionato la ricerca globale è l'unica fonte di
   // risultati, e allora può prenderne di più: da sola non deve spartire il limite di caratteri
-  // con nient'altro.
-  // Il valore 3 è tenuto basso deliberatamente. Misurato con scripts/prova-ricerca.mjs: qualsiasi
-  // valore da 1 a 8 fa passare esattamente gli stessi casi, ma il testo complessivo inviato a
-  // Gemini cresce del 32% passando da 1 a 8 (40007 -> 52838 caratteri sui casi di prova). I blocchi
-  // in più non comprano niente di misurabile e consumano il limite di caratteri a scapito dei
-  // blocchi dei capitoli selezionati. Non è 1 solo per lasciare un margine: nei due casi misurati
-  // il blocco decisivo era primo in classifica, ma non c'è garanzia che lo sia sempre.
-  const MASSIMO_BLOCCHI_RETE_DI_SICUREZZA = 3;
-  const MASSIMO_BLOCCHI_SENZA_CAPITOLI = 15;
+  // con nient'altro. I due valori, e il perché di quei numeri, sono in cima al file.
   const quantiGlobali =
     capitoliSelezionati.length > 0 ? MASSIMO_BLOCCHI_RETE_DI_SICUREZZA : MASSIMO_BLOCCHI_SENZA_CAPITOLI;
   const globali = miglioriBlocchiTra(punteggiBlocchi, quantiGlobali);
