@@ -34,8 +34,8 @@ Non esiste una suite di test automatici end-to-end. Il metodo di verifica standa
 ## Struttura del progetto
 
 - `app/page.tsx` — interfaccia utente: chat multi-turno (cronologia dei messaggi utente/giudice), upload/scatto foto del tavolo con anteprima, pulsanti di risposta rapida ai chiarimenti del giudice
-- `app/api/judge/route.ts` — endpoint principale (`POST`), orchestratore di tutta la logica: estrazione parole chiave/carte, ricerca regole, ricerca Scryfall, costruzione del prompt finale e chiamata a Gemini (anche multimodale, se è allegata un'immagine)
-- `lib/rules.ts` — ricerca in entrambi i regolamenti, con due strategie diverse perché i due documenti hanno strutture opposte (vedi "Decisioni architetturali"): `cercaRegolePertinenti()` per le CR (a due fasi: macro capitolo poi micro blocco) e `cercaRegoleTorneo()` per l'MTR (per titolo di sottosezione). Per le CR i capitoli entrano da quattro canali indipendenti — titolo, corpo, numero di regola citato, e rimandi del Glossario ufficiale (`capitoliDaGlossario`, con voto pesato per rarità del termine) — e i blocchi selezionati si portano dietro la propria regola padre (`conBlocchiPadre`, perché "709.5." enuncia il principio che "709.5j" raffina)
+- `app/api/judge/route.ts` — endpoint principale (`POST`), orchestratore di tutta la logica: estrazione parole chiave/carte, ricerca regole, ricerca Scryfall, costruzione del prompt finale e chiamata a Gemini (anche multimodale, se è allegata un'immagine). `POST` contiene la sequenza delle fasi; i blocchi che non decidono nulla sul flusso stanno in funzioni a parte: `eseguiEstrazioneFaseA` (FASE A), `formattaSezioneCarte` (la scheda per carta del prompt), `eseguiVerificaFaseE` (FASE E, try/catch dedicato compreso), `erroreValidazioneImmagine` e `normalizzaCronologia` (validazione dell'input)
+- `lib/rules.ts` — ricerca in entrambi i regolamenti, con due strategie diverse perché i due documenti hanno strutture opposte (vedi "Decisioni architetturali"): `cercaRegolePertinenti()` per le CR (a due fasi: macro capitolo poi micro blocco) e `cercaRegoleTorneo()` per l'MTR (per titolo di sottosezione). Per le CR i capitoli entrano da quattro canali indipendenti — titolo, corpo, numero di regola citato, e rimandi del Glossario ufficiale (`capitoliDaGlossario`, con voto pesato per rarità del termine) — e i blocchi selezionati si portano dietro la propria regola padre (`conBlocchiPadre`, perché "709.5." enuncia il principio che "709.5j" raffina). La ricerca nelle CR è scritta come tre passi con un nome: `punteggiaBlocchi` (un punteggio per ogni blocco), `selezionaCapitoli` (quali capitoli guardare, sui quattro canali), `raccogliBlocchi` (i migliori di ciascun capitolo più la rete di sicurezza globale); `cercaBlocchiPertinenti` li mette in fila e basta. **Tutte le manopole numeriche del recupero sono costanti in cima al file**, ciascuna col perché di quel valore: è lì che si interviene, non dentro le funzioni
 - `lib/errata.ts` — `cercaErrataPertinenti()`, corrispondenza per nome esatto (case-insensitive) contro `data/errata-locali.json`; vedi "Correzioni manuali" più sotto
 - `lib/scryfall.ts` — interrogazione API Scryfall per riga del tipo, Oracle Text, Rulings e legalità nei formati principali, con cascata di ricerca fuzzy → autocomplete → ricerca testuale (quest'ultima con verifica di somiglianza del nome, per evitare di accettare una carta sbagliata) e cache in memoria del processo
 - `lib/prompts.ts` — testo dei tre prompt inviati a Gemini (FASI A, D, E). Assembla soltanto, non decide nulla: le fasi e il loro ordine stanno in `route.ts`. Il testo è il risultato di molte iterazioni, va modificato con prudenza
@@ -176,6 +176,7 @@ Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge
 - **Il Glossario ufficiale è collegato al recupero** (`capitoliDaGlossario`): 726 voci, di cui 631 con un rimando "See rule NNN" scritto da Wizards, usate come mappa vocabolario → capitolo con voto pesato per rarità del termine. Vedi "Caso risolto: regola 709.5" per il perché del voto e del peso
 - **I blocchi si portano dietro la regola padre** (`conBlocchiPadre`): le CR sono un albero e recuperare "709.5j" senza "709.5." consegna al modello il rimando senza la regola. È stata la causa decisiva del bug delle Stanze, sfuggita a tutta l'analisi precedente
 - **Rilevatore di citazioni senza fonte** in `route.ts` (`numeriDiRegolaCitati` / `regoleCitateSenzaFonte`): se il verdetto cita un numero di regola che NON compare negli estratti forniti, il modello l'ha preso dalla propria memoria. Finisce in `console.error` e fa scattare la FASE E. Prima la FASE E guardava solo il testo delle regole RECUPERATE, quindi restava inerte proprio quando il recupero aveva fallito, cioè nel caso peggiore
+- Snellimento del codice a parità di comportamento, 7 commit su `simplify/judge-cleanup` (vedi la sezione dedicata più sotto per il metodo e per le semplificazioni valutate e scartate): codice morto e ripetizioni rimosse, costanti del recupero raccolte in cima a `rules.ts`, e le due funzioni lunghe (`cercaBlocchiPertinenti`, `POST`) spezzate nei loro passi. Verificato con confronto **byte per byte** dell'output del recupero su 23 casi: impronta SHA256 identica dal primo all'ultimo commit
 - Il prompt della FASE D distingue ora "estratti presenti" da "estratti pertinenti": deve dichiarare apertamente quando nessuna fonte affronta direttamente il caso, invece di trattare la presenza di estratti come garanzia che siano quelli giusti
 
 ## Prestazioni misurate in produzione
@@ -287,8 +288,41 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
 - Decisione di prodotto da prendere: se il parse JSON della FASE A fallisce, oggi il giudice risponde senza fonti avvisando l'utente. L'alternativa è restituire un errore. Il log c'è già, la decisione no
 - **Estendere la pesatura per rarità al punteggio dei blocchi.** Oggi `pesoDiRarita` è usata SOLO per il voto del Glossario, dove è nuova e isolata. Il punteggio dei blocchi resta binario (+1 per parola chiave), quindi `Land` ed `Enchantment` — iniettate in automatico dalla riga del tipo Scryfall in `route.ts` — pesano quanto `deathtouch`. È la leva più profonda rimasta, ma tocca il cuore di una funzione tarata su molti casi misurati: va fatta misurando `npm run prova-ricerca` a ogni passo, mai a intuito
 - Osservato e non risolto: in una prova a 3 turni il giudice ha dato la conclusione giusta sull'abilità del terzo capitolo di Urza's Saga appoggiandosi a «la pila si risolve in modo indipendente dai permanenti» invece di citare la 113.7a — che **era** fra gli estratti (verificato nei log). Non è una lacuna di recupero ma variabilità del modello nel citare la fonte che ha davanti; se ricapita, il posto in cui intervenire è il prompt della FASE D, non `lib/rules.ts`
-- Semplificazioni individuate e non applicate: eliminare `normalizza()` in `lib/rules.ts` (è solo `toLowerCase()`, e `iniziaUnaParolaDi` normalizza già al proprio interno), estrarre il parsing della FASE A e la validazione dell'immagine da `route.ts` in funzioni dedicate, togliere le tre riassegnazioni morte nel `catch` della FASE A (le variabili sono già inizializzate e da `JSON.parse` non esiste un percorso di assegnazione parziale)
+- Semplificazioni valutate e **deliberatamente NON applicate** (vedi "Snellimento del codice" più sotto per il metodo, e non riproporle senza un'idea nuova): accorpare in `lib/scryfall.ts` le cinque ripetizioni dello schema "chiama → registra lo status → distingui 404 da guasto"; dare un nome al filtro `paroleChiave.filter((p) => p.length > 2)`; riscrivere come ciclo la cascata fuzzy → autocomplete → ricerca testuale; mettere in una costante condivisa la stringa `===OPZIONI_CHIARIMENTO===`, oggi ripetuta in `lib/prompts.ts`, `route.ts` e `app/page.tsx`
 - Le note di lavoro personali (fra cui `REVISIONE.md`) sono in `note-di-lavoro/`, cartella esclusa da git
+
+## Snellimento del codice (agosto 2026) — esito e metodo
+
+Sette interventi a **parità di comportamento**, sul branch `simplify/judge-cleanup`: import morto
+rimosso; in `route.ts` un `if` ridondante, un controllo su un caso impossibile, una funzione chiamata
+due volte e una lista ricostruita ad ogni richiesta; in `rules.ts` le nove costanti del recupero
+raccolte in cima al file e il conteggio delle parole chiave da tre cicli identici a una riga; in
+`page.tsx` un nome al controllo di conversazione ancora attuale; infine lo spezzettamento delle due
+funzioni lunghe (`cercaBlocchiPertinenti` 89 → 55 righe di codice, `POST` 152 → 127).
+
+**Due lezioni pagate con altrettanti errori, da tenere presenti prima di proporre altre pulizie:**
+
+1. **Non stimare a occhio quante righe si risparmiano: misurarle.** L'accorpamento delle cinque
+   chiamate ripetute in `lib/scryfall.ts` era stato proposto come "~30 righe in meno" e, una volta
+   scritto, ne aggiungeva 8 — perché per non confondere «Scryfall ha risposto 404» con «il corpo
+   della risposta è vuoto» l'helper non può leggere il JSON al posto del chiamante. È stato
+   annullato. Il comando per misurare:
+   `grep -v "^\s*//" file | grep -v "^\s*$" | wc -l`
+2. **Spezzare una funzione lunga fa crescere il file, non calare.** `rules.ts` è passato da 295 a 326
+   righe di codice e `route.ts` da 272 a 284: il guadagno sta nella funzione più lunga e nel punto di
+   ingresso, non nel totale. Va detto esplicitamente quando si propone, altrimenti si promette un
+   risparmio che non arriverà.
+
+**Come si verifica che un refactor di `lib/rules.ts` non abbia cambiato niente.** `npm run
+prova-ricerca` a 12/12 NON basta: verifica solo che certi numeri di regola compaiano, quindi passa
+anche se i blocchi recuperati, il loro ordine o le troncature sono cambiati — e siccome
+`assemblaEstratti` tronca a `LIMITE_CARATTERI`, un cambio d'ordine cambia in silenzio QUALI regole
+arrivano a Gemini. La verifica vera è salvare l'output **completo** di `cercaRegolePertinenti` e
+`cercaRegoleTorneo` su tutti i casi prima della modifica, ricalcolarlo dopo e confrontare le due
+impronte SHA256. Conviene aggiungere ai 12 casi ufficiali qualche caso limite che quelli non toccano:
+nessuna parola chiave, parole senza alcun riscontro, regola citata inesistente nella fonte,
+numerazione MTR passata alle CR e viceversa, stringa vuota fra le regole citate. Durante questo
+lavoro l'impronta è rimasta identica su 23 casi dal primo all'ultimo commit.
 
 ## Note di stile per chi genera codice su questo progetto
 - Tutti i commenti, nomi di variabili/funzioni e messaggi rivolti all'utente sono in ITALIANO
