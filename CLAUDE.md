@@ -230,24 +230,37 @@ ricerca, non all'avvio della funzione, quindi non toccherebbe il cold start nemm
 `{"domanda":""}` riceve un `400` prima di qualunque chiamata a Gemini, quindi misura l'avvio della
 funzione **senza consumare quota**. Conta però sul limite per IP (20 richieste ogni 10 minuti).
 
-### Il cold start di 44 secondi: numero da non prendere per buono
+### Il cold start è ~0,6 s, non 44 s (misurato, cifra vecchia smentita)
 
 Una serie di tre richieste (54,3 s / 10,0 s / 9,7 s) aveva fatto scrivere qui che «il cold start
-domina, con circa 44 secondi di scarto». **Quella cifra non si è mai riprodotta**: in una prova
-successiva, dopo 16 minuti senza traffico, la richiesta è durata 10,0 s, cioè quanto una calda.
+domina, con circa 44 secondi di scarto». **Misurato: è falso.** Due prove indipendenti dopo ~9
+minuti di silenzio ciascuna:
 
-L'ipotesi in piedi è che i 44 secondi non fossero il risveglio da inattività ma **la primissima
-invocazione di un deploy nuovo** (le tre misure originali furono prese subito dopo un rilascio). Se
-regge, il ritardo colpisce solo chi apre l'app per primo dopo un rilascio, non chi la apre dopo ore
-di silenzio. Le misure di oggi la rafforzano per esclusione: se la funzione sveglia risponde in
-180 ms e i dati costano 15 ms, nel nostro codice non c'è nulla che possa produrre 44 secondi.
+| Prova | 1ª richiesta (istanza addormentata) | richieste successive |
+|---|---|---|
+| senza connessione già aperta | 1017 ms | 197 ms |
+| con connessione TLS già aperta su file statici | **814 ms** | 181 / 172 ms |
 
-**Metodo, perché la prima verifica fu sprecata**: la prova va fatta con il deploy ormai vecchio e con
-UNA SOLA richiesta all'endpoint. Non caricare prima la homepage — così facendo, la richiesta "a
-freddo" (9,3 s) risultò più veloce della successiva "a calda" (12,3 s), segno che l'istanza era già
-sveglia. Serve anche che nessun altro tocchi il sito nella finestra precedente, condizione non
-verificabile dall'esterno: una misura sola non basta a riscrivere un numero che ne aveva tre alle
-spalle.
+**Il risveglio costa circa 640 ms** (814 meno i ~175 ms di una richiesta calda), cioè circa settanta
+volte meno di quanto scritto prima. La seconda prova è quella valida: la prima richiesta di ogni
+serie paga anche l'apertura della connessione TLS del client, che da sola vale ~1 s **anche su un
+file statico**, dove nessuna funzione viene invocata — chi misura senza tenerne conto attribuisce al
+server un secondo che è del proprio client.
+
+Resta non misurata **la primissima invocazione di un deploy nuovo**: è l'unica ipotesi rimasta per i
+54,3 s originali, dato che quelle tre misure furono prese subito dopo un rilascio. Se regge, il
+ritardo colpisce solo chi apre l'app per primo dopo un rilascio, e non vale la pena inseguirlo.
+Prova da fare al prossimo rilascio vero, senza forzarne uno apposta.
+
+**Metodo per non sprecare la misura** (già sprecata due volte):
+- La prova va fatta con il deploy ormai vecchio, e serve che nessun altro tocchi il sito nella
+  finestra di silenzio precedente — condizione non verificabile dall'esterno.
+- **Aprire prima la connessione su un file statico**, poi cronometrare la funzione: `/` e
+  `manifest.json` sono serviti dalla CDN (`○ Static` nell'output di `npm run build`) e **non
+  risvegliano la funzione**, quindi non falsano la misura. La nota precedente sconsigliava di
+  caricare la homepage temendo il contrario: era un timore infondato, e l'anomalia che l'aveva
+  motivata (9,3 s "a freddo" contro 12,3 s "a caldo") era con ogni probabilità la normale
+  variabilità di Gemini.
 
 Il **timeout della funzione su Vercel non è un problema**: la richiesta da 54,3 s è andata a buon
 fine, quindi il limite è ben oltre il minuto. Non serve controllare la dashboard per questo.
@@ -339,7 +352,7 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
    un'abilità sulla pila esiste indipendentemente dalla propria fonte (113.7a).
 
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
-- Ottimizzazione velocità — **il fronte vero è uno solo, le 2-3 chiamate Gemini sequenziali dei ~10 s a caldo**: infrastruttura e file dati sono stati misurati ed esclusi (vedi "Prestazioni"), quindi non c'è altro da spremere. La soluzione proposta è un dizionario locale IT-EN in `lib/dizionario.ts` per saltare la FASE A quando basta — **non applicata**, il file non esiste, e toglierebbe al massimo una delle tre chiamate. Il presunto cold start da 44 s non si è mai riprodotto e non va inseguito prima di averlo riosservato: la prova aperta è cronometrare la primissima richiesta dopo un rilascio nuovo
+- Ottimizzazione velocità — **il fronte vero è uno solo, le 2-3 chiamate Gemini sequenziali dei ~10 s a caldo**: infrastruttura e file dati sono stati misurati ed esclusi (vedi "Prestazioni"), quindi non c'è altro da spremere. La soluzione proposta è un dizionario locale IT-EN in `lib/dizionario.ts` per saltare la FASE A quando basta — **non applicata**, il file non esiste, e toglierebbe al massimo una delle tre chiamate. Il presunto cold start da 44 s è stato smentito dalla misura (il risveglio costa ~0,6 s): non va inseguito. L'unica prova ancora aperta, di curiosità e non di ottimizzazione, è cronometrare la primissima richiesta dopo un rilascio nuovo
 - Decisione di prodotto da prendere: se il parse JSON della FASE A fallisce, oggi il giudice risponde senza fonti avvisando l'utente. L'alternativa è restituire un errore. Il log c'è già, la decisione no
 - **Estendere la pesatura per rarità al punteggio dei blocchi.** Oggi `pesoDiRarita` è usata SOLO per il voto del Glossario, dove è nuova e isolata. Il punteggio dei blocchi resta binario (+1 per parola chiave), quindi `Land` ed `Enchantment` — iniettate in automatico dalla riga del tipo Scryfall in `route.ts` — pesano quanto `deathtouch`. È la leva più profonda rimasta, ma tocca il cuore di una funzione tarata su molti casi misurati: va fatta misurando `npm run prova-ricerca` a ogni passo, mai a intuito
 - Osservato e non risolto: in una prova a 3 turni il giudice ha dato la conclusione giusta sull'abilità del terzo capitolo di Urza's Saga appoggiandosi a «la pila si risolve in modo indipendente dai permanenti» invece di citare la 113.7a — che **era** fra gli estratti (verificato nei log). Non è una lacuna di recupero ma variabilità del modello nel citare la fonte che ha davanti; se ricapita, il posto in cui intervenire è il prompt della FASE D, non `lib/rules.ts`
