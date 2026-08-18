@@ -252,6 +252,12 @@ Resta non misurata **la primissima invocazione di un deploy nuovo**: è l'unica 
 ritardo colpisce solo chi apre l'app per primo dopo un rilascio, e non vale la pena inseguirlo.
 Prova da fare al prossimo rilascio vero, senza forzarne uno apposta.
 
+Un tentativo del 19 agosto 2026 **è fallito, e il motivo vale come regola**: il commit pubblicato
+toccava solo CLAUDE.md, che non entra nella build. Il pacchetto servito ai browser era quindi
+identico byte per byte a quello precedente, e **dall'esterno non esisteva alcun segnale che
+distinguesse il deploy nuovo dal vecchio**. Misurare la prima invocazione di un rilascio richiede un
+rilascio che cambi davvero il codice dell'app.
+
 **Metodo per non sprecare la misura** (già sprecata due volte):
 - La prova va fatta con il deploy ormai vecchio, e serve che nessun altro tocchi il sito nella
   finestra di silenzio precedente — condizione non verificabile dall'esterno.
@@ -261,6 +267,13 @@ Prova da fare al prossimo rilascio vero, senza forzarne uno apposta.
   caricare la homepage temendo il contrario: era un timore infondato, e l'anomalia che l'aveva
   motivata (9,3 s "a freddo" contro 12,3 s "a caldo") era con ogni probabilità la normale
   variabilità di Gemini.
+- **Per sapere se un deploy nuovo è davvero online, cercare una stringa nuova dentro il pacchetto
+  JavaScript servito** — scaricare la homepage, estrarne i percorsi `/_next/static/chunks/*.js` e
+  cercarvi dentro un testo introdotto da quel rilascio (es. `"Preparo la foto"` per il rilascio del
+  19 agosto 2026). **Gli header di cache non servono**: `Age` a zero e `X-Vercel-Cache` diverso da
+  `HIT` compaiono anche alla normale rivalidazione della homepage (servita con `must-revalidate`), e
+  in una prova hanno segnalato un deploy «pubblicato» 12 secondi dopo il push, quando una build ne
+  richiede almeno sessanta.
 
 Il **timeout della funzione su Vercel non è un problema**: la richiesta da 54,3 s è andata a buon
 fine, quindi il limite è ben oltre il minuto. Non serve controllare la dashboard per questo.
