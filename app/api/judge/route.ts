@@ -14,7 +14,8 @@ import {
   costruisciPromptVerifica,
   type InputPromptVerifica,
 } from "@/lib/prompts";
-import { logDebug } from "@/lib/debug";
+import { DEBUG_ATTIVO, logDebug } from "@/lib/debug";
+import { contieneRegolaCondizionaleComplessa } from "@/lib/verifica";
 import { richiestaConsentita } from "@/lib/limite";
 
 type MessaggioCronologia = {
@@ -70,40 +71,6 @@ function normalizzaCronologia(valore: unknown): MessaggioCronologia[] {
   }
 
   return messaggiSelezionati;
-}
-
-// Indicatori testuali del tipo di regola condizionale a più clausole (spesso un'azione basata
-// sullo stato con un confronto numerico) su cui il modello ha già mostrato di sbagliare più
-// facilmente il ragionamento passo-passo (es. la regola 714.4 sul sacrificio delle Saghe).
-const INDICATORI_REGOLA_CONDIZIONALE = [
-  "state-based action",
-  "greater than or equal",
-  "less than or equal",
-  "equal to or greater",
-  "equal to or less",
-  // Copre anche "and it isn't": qualsiasi testo che contenga quella forma contiene già questa.
-  " and it is",
-  "if the number of",
-  // Regola 709.5 (Stanze/Room e altre carte con riga del tipo condivisa): "As long as this
-  // permanent doesn't have [designazione], it doesn't have [caratteristica]". Caso reale: il
-  // giudice ha citato correttamente la 709.5 ma ne ha invertito la conclusione (ha detto che il
-  // costo di mana si combina SEMPRE, quando la regola dice il contrario per il lato bloccato), e
-  // la FASE E non scattava perché nessun indicatore esistente compare in questo testo.
-  "as long as this permanent doesn't have",
-];
-
-// Indica se il testo delle regole citate contiene uno di quegli indicatori. Quando è così, la
-// risposta viene fatta ricontrollare da un secondo passaggio dedicato (FASE E) prima di essere
-// inviata all'utente.
-function contieneRegolaCondizionaleComplessa(testoRegole: string): boolean {
-  // Gli apostrofi vengono uniformati all'ASCII su ENTRAMBI i lati del confronto. Il testo ufficiale
-  // delle CR usa l'apostrofo tipografico (U+2019), gli indicatori qui sopra sono scritti in ASCII:
-  // senza questa normalizzazione l'indicatore della 709.5 non troverebbe mai il proprio testo. La
-  // dipendenza era fragile in entrambe le direzioni — bastava che una rigenerazione di
-  // data/regole-compatte.json normalizzasse la punteggiatura, o che qualcuno riscrivesse un
-  // indicatore copiandolo da un'altra fonte, per spegnere il controllo in silenzio.
-  const testoNormalizzato = testoRegole.toLowerCase().replace(/[‘’]/g, "'");
-  return INDICATORI_REGOLA_CONDIZIONALE.some((indicatore) => testoNormalizzato.includes(indicatore));
 }
 
 // Estrae i numeri di regola citati in un testo, nella forma usata dalle Comprehensive Rules
@@ -262,7 +229,40 @@ async function eseguiEstrazioneFaseA(
   }
 }
 
+// Cronometro delle fasi: dice quanto è durato ogni pezzo della richiesta. Serve a decidere DOVE
+// intervenire per accelerare l'app invece di indovinarlo — l'unico numero noto è il totale (~10 s a
+// caldo), che da solo non dice se pesino di più le chiamate a Gemini o quelle a Scryfall.
+// I tempi passano da `logDebug`, quindi in produzione non compaiono a meno di DEBUG_JUDGE=true.
+function avviaCronometro() {
+  const inizio = Date.now();
+  let precedente = inizio;
+  const misure: { fase: string; ms: number }[] = [];
+
+  return {
+    tappa(nome: string) {
+      const ora = Date.now();
+      const durata = ora - precedente;
+      misure.push({ fase: nome, ms: durata });
+      logDebug(`[DEBUG] TEMPI — ${nome}: ${durata} ms`);
+      precedente = ora;
+    },
+    totale(nome: string) {
+      const durata = Date.now() - inizio;
+      misure.push({ fase: nome, ms: durata });
+      logDebug(`[DEBUG] TEMPI — ${nome}: ${durata} ms`);
+    },
+    // I tempi finiscono anche nella risposta, ma solo con DEBUG_JUDGE=true: leggere la console del
+    // server non è sempre possibile (in produzione servono i log di Vercel, e in locale il server
+    // può appartenere a un'altra sessione), mentre la risposta la vede chiunque faccia la richiesta.
+    elenco() {
+      return misure;
+    },
+  };
+}
+
 export async function POST(request: NextRequest) {
+  const cronometro = avviaCronometro();
+
   if (!richiestaConsentita(ipClient(request))) {
     return NextResponse.json(
       { errore: "Troppe richieste da questo indirizzo IP. Riprova tra qualche minuto." },
@@ -321,6 +321,8 @@ export async function POST(request: NextRequest) {
     // FASE A: estrai parole chiave, numeri di regola e nomi di carte citati in tutta la conversazione finora
     const { keywords, citedRules, cardNames } = await eseguiEstrazioneFaseA(model, domanda, testoCronologia);
 
+    cronometro.tappa("FASE A (Gemini: estrazione)");
+
     logDebug("[DEBUG] Nomi carte estratti dalla domanda:", JSON.stringify(cardNames));
 
     // Correzioni manuali a rulings superati: a differenza delle CR e dell'MTR non è un documento
@@ -360,6 +362,8 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    cronometro.tappa(`FASE B (Scryfall: ${cardNamesLimitate.length} carte cercate)`);
+
     logDebug("[DEBUG] Risultati ricerca carte:", JSON.stringify(datiCarte.map((c) => c.nome)));
 
     // FASE C: cerca i frammenti di regole pertinenti nel testo ufficiale (nessun costo in token).
@@ -385,6 +389,8 @@ export async function POST(request: NextRequest) {
     // comunicazione, tiebreaker, penalità, legalità dei formati) non sono coperte dalle CR.
     const estrattiRegoleTorneo = cercaRegoleTorneo(keywordCombinate, citedRules);
     const dataEfficaciaRegoleTorneo = getDataEfficaciaRegoleTorneo();
+
+    cronometro.tappa("FASE C (ricerca locale nei due regolamenti)");
 
     const sezioneCarte = formattaSezioneCarte(datiCarte);
 
@@ -415,6 +421,8 @@ export async function POST(request: NextRequest) {
         ])
       : await model.generateContent(promptSistema);
     let risposta = result.response.text();
+
+    cronometro.tappa(haImmagine ? "FASE D (Gemini: verdetto, con immagine)" : "FASE D (Gemini: verdetto)");
 
     logDebug("[DEBUG] Risposta grezza di Gemini (prima della verifica):", risposta);
 
@@ -461,11 +469,18 @@ export async function POST(request: NextRequest) {
         domanda,
         risposta,
       });
+
+      cronometro.tappa("FASE E (Gemini: verifica)");
     }
 
     logDebug("[DEBUG] Risposta finale (dopo la verifica, prima dell'invio al frontend):", risposta);
 
-    return NextResponse.json({ risposta: risposta });
+    cronometro.totale(necessitaVerifica ? "TOTALE (con FASE E)" : "TOTALE (senza FASE E)");
+
+    return NextResponse.json({
+      risposta: risposta,
+      ...(DEBUG_ATTIVO ? { tempi: cronometro.elenco() } : {}),
+    });
   } catch (errore) {
     console.error("Errore nella chiamata a Gemini:", errore);
     return NextResponse.json(

@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "prova-ricerca": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-ricerca.mjs",
-    "prova-copertura": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-copertura.mjs"
+    "prova-copertura": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-copertura.mjs",
+    "prova-verifica": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-verifica.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
