@@ -17,12 +17,17 @@ export default function AllegatoFoto({ immagine, inputFileRef, onSelezionaFoto, 
       >
         📷 Allega o scatta una foto del tavolo (opzionale)
       </label>
+      {/*
+        NON rimettere l'attributo `capture`: su telefono apre di filato la fotocamera e toglie
+        all'utente la possibilità di scegliere una foto già presente in galleria (su desktop
+        viene invece ignorato). Senza, il browser mobile mostra da solo il menu con entrambe le
+        strade — fotocamera E galleria/file — che è quanto promette l'etichetta qui sopra.
+      */}
       <input
         id="foto-tavolo"
         ref={inputFileRef}
         type="file"
         accept="image/*"
-        capture="environment"
         onChange={onSelezionaFoto}
         className="hidden"
       />
