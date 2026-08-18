@@ -33,7 +33,7 @@ Non esiste una suite di test automatici end-to-end. Il metodo di verifica standa
 
 ## Struttura del progetto
 
-- `app/page.tsx` — interfaccia utente: chat multi-turno (cronologia dei messaggi utente/giudice), upload/scatto foto del tavolo con anteprima, pulsanti di risposta rapida ai chiarimenti del giudice
+- `app/page.tsx` — interfaccia utente: chat multi-turno (cronologia dei messaggi utente/giudice), upload/scatto foto del tavolo con anteprima, pulsanti di risposta rapida ai chiarimenti del giudice. Contiene anche `preparaFotoPerInvio` (rimpicciolimento della foto prima dell'invio) e `messaggioPerErroreDiPiattaforma` (traduzione dei codici HTTP che non arrivano dalla nostra API): vedi "Limite di dimensione della richiesta su Vercel"
 - `app/api/judge/route.ts` — endpoint principale (`POST`), orchestratore di tutta la logica: estrazione parole chiave/carte, ricerca regole, ricerca Scryfall, costruzione del prompt finale e chiamata a Gemini (anche multimodale, se è allegata un'immagine). `POST` contiene la sequenza delle fasi; i blocchi che non decidono nulla sul flusso stanno in funzioni a parte: `eseguiEstrazioneFaseA` (FASE A), `formattaSezioneCarte` (la scheda per carta del prompt), `eseguiVerificaFaseE` (FASE E, try/catch dedicato compreso), `erroreValidazioneImmagine` e `normalizzaCronologia` (validazione dell'input)
 - `lib/rules.ts` — ricerca in entrambi i regolamenti, con due strategie diverse perché i due documenti hanno strutture opposte (vedi "Decisioni architetturali"): `cercaRegolePertinenti()` per le CR (a due fasi: macro capitolo poi micro blocco) e `cercaRegoleTorneo()` per l'MTR (per titolo di sottosezione). Per le CR i capitoli entrano da quattro canali indipendenti — titolo, corpo, numero di regola citato, e rimandi del Glossario ufficiale (`capitoliDaGlossario`, con voto pesato per rarità del termine) — e i blocchi selezionati si portano dietro la propria regola padre (`conBlocchiPadre`, perché "709.5." enuncia il principio che "709.5j" raffina). La ricerca nelle CR è scritta come tre passi con un nome: `punteggiaBlocchi` (un punteggio per ogni blocco), `selezionaCapitoli` (quali capitoli guardare, sui quattro canali), `raccogliBlocchi` (i migliori di ciascun capitolo più la rete di sicurezza globale); `cercaBlocchiPertinenti` li mette in fila e basta. **Tutte le manopole numeriche del recupero sono costanti in cima al file**, ciascuna col perché di quel valore: è lì che si interviene, non dentro le funzioni
 - `lib/errata.ts` — `cercaErrataPertinenti()`, corrispondenza per nome esatto (case-insensitive) contro `data/errata-locali.json`; vedi "Correzioni manuali" più sotto
@@ -142,6 +142,34 @@ come `prova-ricerca`) — è un miglioramento motivato dal punteggio di benchmar
 
 Se in futuro un modello dà errore 404/429, verificare via web search il nome/quota aggiornati prima di cambiare codice — Google aggiorna spesso la disponibilità dei modelli.
 
+## Limite di dimensione della richiesta su Vercel (caso risolto: foto del tavolo)
+
+**Vercel rifiuta ogni richiesta il cui corpo supera 4,5 MB**, e la blocca prima che la funzione
+venga eseguita: risponde `413` con un corpo di **testo semplice** (`Request Entity Too Large` /
+`FUNCTION_PAYLOAD_TOO_LARGE`), non in JSON. Misurato dal vivo contro l'app deployata.
+
+Ne derivavano due difetti, entrambi corretti:
+
+1. **Le foto scattate col telefono superavano il limite.** Una foto da 3-5 MB, convertita in base64
+   per viaggiare dentro il JSON, cresce di un altro 33% e sfonda i 4,5 MB. Il difetto era
+   intermittente per natura (una foto da 2,5 MB passa, una da 3,5 MB no) e **invisibile in locale**,
+   dove quel limite non esiste. Risolto rimpicciolendo la foto nel browser prima dell'invio
+   (`preparaFotoPerInvio` in `app/page.tsx`): lato massimo 1600 px e ricompressione JPEG a qualità
+   0,85. Misurato: 4032×3024 → 1600×1200, da ~2,2 MB a 0,54 MB di base64; una carta in PNG da
+   1,5 MB scende a 253 KB. Il ridimensionamento usa `createImageBitmap` con
+   `imageOrientation: "from-image"` perché **raddrizza le foto verticali** leggendo l'orientamento
+   EXIF: senza, il giudice riceve la foto coricata su un fianco.
+2. **L'app dava la colpa alla connessione.** `page.tsx` faceva `await response.json()` su una
+   risposta che JSON non era: l'eccezione finiva nel `catch` di rete e mostrava «Impossibile
+   contattare il server», mentre il server aveva risposto benissimo. Ora il corpo si legge come
+   testo e si interpreta a parte, e `messaggioPerErroreDiPiattaforma` traduce il codice HTTP
+   (413 = foto troppo pesante, 408/502/504 = troppo lento, 429 = troppe richieste).
+
+**Conseguenza da tenere presente: il controllo degli ~8MB in `erroreValidazioneImmagine`
+(`route.ts`) è irraggiungibile in produzione**, perché il taglio di Vercel a 4,5 MB scatta prima.
+Vale solo in locale. Non è stato rimosso perché resta una rete di sicurezza per l'esecuzione locale
+e per un eventuale cambio di piattaforma, ma non contarci come difesa reale.
+
 ## Problema noto (risolto): OneDrive
 Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge-mtg — causava file salvati a 0 byte (placeholder cloud non sincronizzati, attributo ReparsePoint) e conflitti di lockfile. Il progetto è stato spostato in C:\ProgettiDev\virtual-judge-mtg, FUORI da OneDrive. Non ricreare mai il progetto dentro cartelle sincronizzate da OneDrive/Dropbox/Google Drive.
 
@@ -150,16 +178,17 @@ Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge
 - Integrazione Scryfall per carte specifiche (Oracle Text + Rulings), con cascata fuzzy → autocomplete → ricerca testuale e verifica di somiglianza del nome per evitare falsi positivi
 - Controllo di ambiguità nel prompt, con limite di domande per turno e verdetti condizionali quando possibile
 - Rimozione di qualsiasi rivendicazione di certificazione da parte del "giudice"
-- Upload/scatto foto del tavolo (con anteprima e rimozione), analizzata da Gemini in modo multimodale
+- Upload/scatto foto del tavolo (con anteprima e rimozione), analizzata da Gemini in modo multimodale, **rimpicciolita nel browser prima dell'invio** (1600 px di lato, JPEG) per stare sotto il limite di 4,5 MB di Vercel — vedi la sezione dedicata. Durante il ridimensionamento il pulsante di invio è disabilitato e scrive "Preparo la foto...", altrimenti la richiesta partirebbe senza l'allegato appena scelto
 - Conversazione multi-turno con cronologia mantenuta lato client e inviata ad ogni richiesta
 - Pulsanti di risposta rapida alle domande di chiarimento del giudice
 - Script `prepara-regole.mjs` per compattare il regolamento in JSON (146 capitoli, 3869 blocchi trovati nell'ultimo run)
-- Validazione input in `route.ts`: lunghezza massima della domanda (2000 caratteri), tipo di immagine consentito (PNG/JPEG/WEBP), dimensione massima dell'immagine (~8MB, calcolata sulla lunghezza della stringa base64) e cronologia validata nella forma (solo elementi con `ruolo` ammesso e `testo` di tipo stringa) e limitata a 16000 caratteri complessivi, tenendo i messaggi più recenti
+- Validazione input in `route.ts`: lunghezza massima della domanda (2000 caratteri), tipo di immagine consentito (PNG/JPEG/WEBP), dimensione massima dell'immagine (~8MB, calcolata sulla lunghezza della stringa base64 — **controllo irraggiungibile in produzione**, vedi "Limite di dimensione della richiesta su Vercel") e cronologia validata nella forma (solo elementi con `ruolo` ammesso e `testo` di tipo stringa) e limitata a 16000 caratteri complessivi, tenendo i messaggi più recenti
 - Log di debug (`[DEBUG]` in `route.ts` e `[DEBUG Scryfall]` in `lib/scryfall.ts`) disattivabili tramite la variabile d'ambiente `DEBUG_JUDGE` (attivi solo se `DEBUG_JUDGE=true` in `.env.local`, altrimenti silenziosi), tramite la funzione condivisa `logDebug` in `lib/debug.ts` (non più duplicata fra i due file)
 - PWA installabile — `public/manifest.json`, icone reali (192/512, standard e maskable) generate con `scripts/genera-icone-pwa.mjs`, metadata `appleWebApp`/`icons` e `viewport.themeColor` in `app/layout.tsx`
 - Limite di richieste per IP — 20 richieste ogni 10 minuti (`lib/limite.ts`), contatore in memoria del processo: protezione parziale (si azzera ai cold start su Vercel, non condivisa tra istanze), ma molto meglio di nessun limite
 - Recupero delle regole (CR) corretto: ricerca globale di sicurezza sempre attiva anche quando dei capitoli erano già stati selezionati (prima scattava solo se nessun capitolo veniva trovato) e confronto per parola intera invece che per sottostringa (evita falsi positivi tipo "tap" dentro "untapped"); verificato con `npm run prova-ricerca` (8 casi, passava da 5/8 a 8/8)
 - Tono dei messaggi di errore in `route.ts` — verificato in questa sessione, giudicato adeguato così com'è
+- Messaggi di errore lato client onesti: una risposta che non arriva in JSON non viene più scambiata per assenza di rete, ma tradotta per codice HTTP (`messaggioPerErroreDiPiattaforma` in `app/page.tsx`). Verificato simulando nel browser i quattro casi: 413, 504, errore JSON della nostra API, rete davvero assente
 - Refactor completati: testi dei prompt estratti in `lib/prompts.ts`, `app/page.tsx` spezzata in componenti (`app/components/AllegatoFoto.tsx`, `BollaMessaggio.tsx`, `IntestazioneChat.tsx`)
 - Cache in memoria per le ricerche Scryfall (`lib/scryfall.ts`) — evita di rifare le stesse chiamate di rete per carte già cercate, condivisa da tutte le richieste sulla stessa istanza calda del processo
 - Affidabilità sulle regole condizionali — decisione presa: FASE E (il doppio controllo sulle regole a più clausole) usa `gemini-3.6-flash` invece di `gemini-3.5-flash-lite`, con fallback al verdetto FASE D non verificato se la quota stretta di quel modello si esaurisce (vedi "Modelli Gemini" sopra). Ulteriori istruzioni nel prompt avevano già mostrato rendimenti decrescenti prima di questa decisione. Effetto reale non misurato con un banco di prova (a differenza del recupero regole)
