@@ -210,18 +210,43 @@ Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge
 
 ## Prestazioni misurate in produzione
 
-Tre richieste identiche di fila all'endpoint deployato, stessa domanda:
+### Il costo per richiesta è Gemini, non l'infrastruttura (misurato il 19 agosto 2026)
 
-| Richiesta | Tempo |
-|---|---|
-| 1ª (istanza fredda) | 54,3 s |
-| 2ª | 10,0 s |
-| 3ª | 9,7 s |
+**Lo stato caldo è ~10 s**, imputabile alle 2-3 chiamate Gemini sequenziali: è questo il numero su
+cui lavorare se si vuole accelerare l'app. Tutto il resto è stato misurato e risulta trascurabile:
 
-Conclusioni: **il cold start domina**, con circa 44 secondi di scarto, e lo **stato caldo è ~10 s**,
-imputabile alle 2-3 chiamate Gemini sequenziali. La causa dei 44 secondi NON è stata identificata: i
-file dati sono stati esclusi (1,2 MB si analizzano in millisecondi), servirebbero i log di Vercel o
-una strumentazione nel codice.
+| Cosa | Tempo | Come è stato misurato |
+|---|---|---|
+| funzione già sveglia, senza Gemini | 168-185 ms | sonde ripetute su `/api/judge` |
+| latenza di rete pura (file statico) | ~150-200 ms | `manifest.json` dalla stessa macchina |
+| lettura + parse dei 3 file dati (1,2 MB) | **15 ms** | benchmark locale con Node |
+
+Cioè: **la funzione sveglia aggiunge meno di 50 ms** al viaggio di rete, e i file dati non pesano
+niente (per giunta il loro caricamento è pigro, `caricaDati` in `lib/rules.ts`: avviene alla prima
+ricerca, non all'avvio della funzione, quindi non toccherebbe il cold start nemmeno se fosse lento).
+
+**Sonda gratuita e ripetibile, da riusare per ogni misura futura**: un `POST` a `/api/judge` con
+`{"domanda":""}` riceve un `400` prima di qualunque chiamata a Gemini, quindi misura l'avvio della
+funzione **senza consumare quota**. Conta però sul limite per IP (20 richieste ogni 10 minuti).
+
+### Il cold start di 44 secondi: numero da non prendere per buono
+
+Una serie di tre richieste (54,3 s / 10,0 s / 9,7 s) aveva fatto scrivere qui che «il cold start
+domina, con circa 44 secondi di scarto». **Quella cifra non si è mai riprodotta**: in una prova
+successiva, dopo 16 minuti senza traffico, la richiesta è durata 10,0 s, cioè quanto una calda.
+
+L'ipotesi in piedi è che i 44 secondi non fossero il risveglio da inattività ma **la primissima
+invocazione di un deploy nuovo** (le tre misure originali furono prese subito dopo un rilascio). Se
+regge, il ritardo colpisce solo chi apre l'app per primo dopo un rilascio, non chi la apre dopo ore
+di silenzio. Le misure di oggi la rafforzano per esclusione: se la funzione sveglia risponde in
+180 ms e i dati costano 15 ms, nel nostro codice non c'è nulla che possa produrre 44 secondi.
+
+**Metodo, perché la prima verifica fu sprecata**: la prova va fatta con il deploy ormai vecchio e con
+UNA SOLA richiesta all'endpoint. Non caricare prima la homepage — così facendo, la richiesta "a
+freddo" (9,3 s) risultò più veloce della successiva "a calda" (12,3 s), segno che l'istanza era già
+sveglia. Serve anche che nessun altro tocchi il sito nella finestra precedente, condizione non
+verificabile dall'esterno: una misura sola non basta a riscrivere un numero che ne aveva tre alle
+spalle.
 
 Il **timeout della funzione su Vercel non è un problema**: la richiesta da 54,3 s è andata a buon
 fine, quindi il limite è ben oltre il minuto. Non serve controllare la dashboard per questo.
@@ -313,7 +338,7 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
    un'abilità sulla pila esiste indipendentemente dalla propria fonte (113.7a).
 
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
-- Ottimizzazione velocità — ora misurata (vedi "Prestazioni"): ~10 s a caldo, ~54 s a freddo. I due fronti sono distinti e vanno affrontati separatamente. **A caldo** pesano le 2-3 chiamate Gemini sequenziali: la soluzione proposta è un dizionario locale IT-EN in `lib/dizionario.ts` per saltare la FASE A quando basta — **non applicata**, il file non esiste, e toglierebbe al massimo una delle tre chiamate. **A freddo** la causa dei 44 s di scarto non è nota e i file dati sono già stati esclusi: primo passo sarebbe strumentare i tempi per fase, oppure leggere i log di Vercel
+- Ottimizzazione velocità — **il fronte vero è uno solo, le 2-3 chiamate Gemini sequenziali dei ~10 s a caldo**: infrastruttura e file dati sono stati misurati ed esclusi (vedi "Prestazioni"), quindi non c'è altro da spremere. La soluzione proposta è un dizionario locale IT-EN in `lib/dizionario.ts` per saltare la FASE A quando basta — **non applicata**, il file non esiste, e toglierebbe al massimo una delle tre chiamate. Il presunto cold start da 44 s non si è mai riprodotto e non va inseguito prima di averlo riosservato: la prova aperta è cronometrare la primissima richiesta dopo un rilascio nuovo
 - Decisione di prodotto da prendere: se il parse JSON della FASE A fallisce, oggi il giudice risponde senza fonti avvisando l'utente. L'alternativa è restituire un errore. Il log c'è già, la decisione no
 - **Estendere la pesatura per rarità al punteggio dei blocchi.** Oggi `pesoDiRarita` è usata SOLO per il voto del Glossario, dove è nuova e isolata. Il punteggio dei blocchi resta binario (+1 per parola chiave), quindi `Land` ed `Enchantment` — iniettate in automatico dalla riga del tipo Scryfall in `route.ts` — pesano quanto `deathtouch`. È la leva più profonda rimasta, ma tocca il cuore di una funzione tarata su molti casi misurati: va fatta misurando `npm run prova-ricerca` a ogni passo, mai a intuito
 - Osservato e non risolto: in una prova a 3 turni il giudice ha dato la conclusione giusta sull'abilità del terzo capitolo di Urza's Saga appoggiandosi a «la pila si risolve in modo indipendente dai permanenti» invece di citare la 113.7a — che **era** fra gli estratti (verificato nei log). Non è una lacuna di recupero ma variabilità del modello nel citare la fonte che ha davanti; se ricapita, il posto in cui intervenire è il prompt della FASE D, non `lib/rules.ts`
