@@ -19,6 +19,8 @@ Chi sviluppa (Augusto) non sa programmare. Ogni istruzione data va accompagnata 
 - `node scripts/prepara-regole-torneo.mjs` — da lanciare ogni volta che `data/tournament-rules.pdf` viene aggiornato, per rigenerare `data/mtr-compatte.json`
 - `npm run prova-ricerca` — banco di prova della ricerca locale nei regolamenti: importa le funzioni reali di `lib/rules.ts` e verifica su casi fissi che i blocchi decisivi vengano recuperati, senza chiamare Gemini (gratuito, istantaneo, deterministico); usarlo per capire se una modifica a `lib/rules.ts` migliora o peggiora il recupero, invece di indovinarlo
 
+- `npm run prova-verifica` — misura su quanti casi scatta la FASE E, il doppio controllo del verdetto, e quale indicatore l'ha fatta scattare. Gratuito e istantaneo come `prova-ricerca` (non chiama Gemini): serve perché la FASE E è la fase più costosa dell'app, quindi ogni modifica a `lib/verifica.ts` va misurata qui prima e dopo. Copre solo l'innesco testuale, non quello delle citazioni senza fonte, quindi il numero che riporta è il minimo
+
 - `npm run prova-copertura` — sonda di misura (non un test): interroga l'API di Board Games Stack Exchange e riporta, per una lista di casi, se esiste una discussione pertinente, quanti voti ha, quando è stata modificata e quali numeri di regola CR cita. Non chiama Gemini e non tocca l'app; consuma la quota gratuita dell'API (300 richieste/giorno senza chiave, una per caso)
 
 Non esiste una suite di test automatici end-to-end. Il metodo di verifica standard del progetto è: avviare `npm run dev`, poi testare l'endpoint con `Invoke-RestMethod` da PowerShell (vedi "Note di stile" sotto) e/o dal browser; per la sola ricerca nei regolamenti c'è `npm run prova-ricerca`, e per il comportamento end-to-end lo scenario descritto in "Banco di prova manuale" più sotto.
@@ -41,6 +43,7 @@ Non esiste una suite di test automatici end-to-end. Il metodo di verifica standa
 - `lib/prompts.ts` — testo dei tre prompt inviati a Gemini (FASI A, D, E). Assembla soltanto, non decide nulla: le fasi e il loro ordine stanno in `route.ts`. Il testo è il risultato di molte iterazioni, va modificato con prudenza
 - `lib/debug.ts` — `DEBUG_ATTIVO` e `logDebug` condivisi da `route.ts` e `lib/scryfall.ts`
 - `lib/limite.ts` — `richiestaConsentita(ip)`, limite di richieste per IP in memoria del processo
+- `lib/verifica.ts` — `contieneRegolaCondizionaleComplessa()` e la lista `INDICATORI_REGOLA_CONDIZIONALE`: decidono se far scattare la FASE E. Stanno qui e non in `route.ts` per essere importabili da `scripts/prova-verifica.mjs` (quindi **niente alias `@/`** in questo file); vedi "Quando scatta la FASE E" per il criterio con cui si aggiunge o toglie una voce
 - `lib/discussioni.ts` — ricerca nelle discussioni di Board Games Stack Exchange. **NON è collegato a `route.ts`**: esiste solo per la sonda `prova-copertura` (vedi "Discussioni della community" più sotto per la decisione presa e il perché)
 - `app/components/` — `AllegatoFoto.tsx`, `BollaMessaggio.tsx`, `IntestazioneChat.tsx`: componenti presentazionali estratti da `page.tsx`
 - `app/tipi.ts` — tipi condivisi fra pagina e componenti
@@ -230,6 +233,56 @@ ricerca, non all'avvio della funzione, quindi non toccherebbe il cold start nemm
 `{"domanda":""}` riceve un `400` prima di qualunque chiamata a Gemini, quindi misura l'avvio della
 funzione **senza consumare quota**. Conta però sul limite per IP (20 richieste ogni 10 minuti).
 
+### Dove vanno i secondi: la FASE E è il collo di bottiglia (misurato il 19-20 agosto 2026)
+
+Tempi per fase su richieste reali, letti dal cronometro di `route.ts` (`avviaCronometro`, che allega
+i tempi alla risposta quando `DEBUG_JUDGE=true`):
+
+| Fase | Domanda con 2 carte | Domanda semplice |
+|---|---|---|
+| FASE A — Gemini, estrazione | 693-875 ms | 620 ms |
+| FASE B — Scryfall | 478-1062 ms | 2 ms |
+| FASE C — ricerca locale nei regolamenti | 258-363 ms | 186 ms |
+| FASE D — Gemini, verdetto | ~2100 ms | 1516 ms |
+| **FASE E — Gemini, verifica** | **7526 ms, e 22818 ms in una seconda prova** | non eseguita |
+| **TOTALE** | **11,5 s / 26,9 s** | **2,3 s** |
+
+**Una sola chiamata fa il grosso del tempo**, e non è la sequenza di 2-3 chiamate a cui il documento
+attribuiva i ~10 s: senza FASE E la stessa app risponde in **2,3 secondi**. La durata della FASE E è
+per giunta molto variabile (7,5 s e 22,8 s sulla STESSA domanda), quindi una misura sola non basta
+mai a giudicarla.
+
+Ne segue che **il dizionario locale IT-EN proposto per saltare la FASE A vale meno di un secondo su
+undici**: è il bersaglio sbagliato, ed è stato declassato in «Cosa manca ancora».
+
+`npm run prova-verifica` misura su quanti casi la FASE E scatta, gratis e senza chiamare Gemini.
+Misurato: **9 casi su 13 (69%) prima**, **8 su 13 (62%) dopo** aver reso più selettivi gli
+indicatori (vedi "Quando scatta la FASE E" più sotto). Attenzione a leggere quella percentuale: i
+casi di prova sono scelti per essere difficili, quindi sovrastimano la frequenza reale.
+
+### Quando scatta la FASE E: indicatori resi più selettivi
+
+`INDICATORI_REGOLA_CONDIZIONALE` in `lib/verifica.ts` deve elencare **condizioni da ricalcolare, non
+meccanismi di gioco**. Sono state tolte due voci che violavano questo criterio:
+
+- `"state-based action"` — da sola causava **6 scatti su 9**, perché nomina un meccanismo citato in
+  mezzo regolamento. Faceva ricontrollare perfino una domanda sulla corruzione in torneo.
+- `" and it is"` — stesso difetto, frammento troppo comune.
+
+È stata aggiunta `"two or more"`, la formula esatta della regola dei permanenti leggendari (704.5j,
+verificata nel testo CR): è una condizione a più clausole che non usa nessuno degli altri confronti,
+e senza quella voce sarebbe rimasta senza innesco.
+
+**Provato e scartato**: aggiungere le quantità scritte a parole (`"at least"`, `"more than"`,
+`"fewer than"`) riportava gli scatti a 9 su 13 accendendone di nuovi altrettanto inutili (una
+domanda sul sideboard). Troppo comuni. **Provata e risultata inutile** anche la divisione degli
+estratti in blocchi per pretendere la co-occorrenza di due segnali nello stesso blocco: siccome ogni
+variante scatta al primo riscontro, dà lo stesso risultato della ricerca piatta e in più complica il
+codice. La differenza viene tutta dalla lista delle frasi.
+
+Verificato dal vivo dopo la modifica: sul benchmark Urza's Saga + Blood Moon la FASE E scatta ancora
+e il verdetto resta corretto.
+
 ### Il cold start è ~0,6 s, non 44 s (misurato, cifra vecchia smentita)
 
 Una serie di tre richieste (54,3 s / 10,0 s / 9,7 s) aveva fatto scrivere qui che «il cold start
@@ -365,7 +418,7 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
    un'abilità sulla pila esiste indipendentemente dalla propria fonte (113.7a).
 
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
-- Ottimizzazione velocità — **il fronte vero è uno solo, le 2-3 chiamate Gemini sequenziali dei ~10 s a caldo**: infrastruttura e file dati sono stati misurati ed esclusi (vedi "Prestazioni"), quindi non c'è altro da spremere. La soluzione proposta è un dizionario locale IT-EN in `lib/dizionario.ts` per saltare la FASE A quando basta — **non applicata**, il file non esiste, e toglierebbe al massimo una delle tre chiamate. Il presunto cold start da 44 s è stato smentito dalla misura (il risveglio costa ~0,6 s): non va inseguito. L'unica prova ancora aperta, di curiosità e non di ottimizzazione, è cronometrare la primissima richiesta dopo un rilascio nuovo
+- Ottimizzazione velocità — **il fronte è uno solo: la FASE E** (7,5-22,8 s misurati, contro 2,3 s dell'intera richiesta quando non scatta; vedi "Dove vanno i secondi"). Primo passo già fatto: indicatori più selettivi, da 9 scatti su 13 a 8. I due passi successivi, non ancora tentati, sono **ridurre il testo che la FASE E riceve** (oggi fino a 36.000 caratteri di regolamenti: misurare prima se la sua durata dipenda davvero dalla lunghezza del prompt, vista la variabilità osservata) e **mostrare subito il verdetto della FASE D correggendolo dopo**, che azzererebbe l'attesa percepita senza toccare la correttezza finale. Infrastruttura, file dati e cold start sono stati misurati ed esclusi. Il dizionario locale IT-EN in `lib/dizionario.ts` **è declassato**: varrebbe meno di un secondo su undici
 - Decisione di prodotto da prendere: se il parse JSON della FASE A fallisce, oggi il giudice risponde senza fonti avvisando l'utente. L'alternativa è restituire un errore. Il log c'è già, la decisione no
 - **Estendere la pesatura per rarità al punteggio dei blocchi.** Oggi `pesoDiRarita` è usata SOLO per il voto del Glossario, dove è nuova e isolata. Il punteggio dei blocchi resta binario (+1 per parola chiave), quindi `Land` ed `Enchantment` — iniettate in automatico dalla riga del tipo Scryfall in `route.ts` — pesano quanto `deathtouch`. È la leva più profonda rimasta, ma tocca il cuore di una funzione tarata su molti casi misurati: va fatta misurando `npm run prova-ricerca` a ogni passo, mai a intuito.
 

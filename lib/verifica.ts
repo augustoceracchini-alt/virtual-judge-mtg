@@ -8,15 +8,28 @@
 // Indicatori testuali del tipo di regola condizionale a più clausole (spesso un'azione basata
 // sullo stato con un confronto numerico) su cui il modello ha già mostrato di sbagliare più
 // facilmente il ragionamento passo-passo (es. la regola 714.4 sul sacrificio delle Saghe).
+// Ogni voce deve descrivere una CONDIZIONE DA RICALCOLARE, non un meccanismo di gioco: sono state
+// tolte "state-based action" e " and it is" perché nominano soltanto il meccanismo e ricorrono in
+// mezzo regolamento. Misurato con `npm run prova-verifica`: "state-based action" da sola causava 6
+// scatti su 9, arrivando a far ricontrollare perfino una domanda sulla corruzione in torneo, dove
+// non c'è nulla di condizionale. Toglierle porta gli scatti da 9 casi su 13 a 8, senza perdere
+// nessuno dei cinque casi in cui la verifica è servita davvero (Saga 714.4 e le tre varianti
+// Stanze/709.5, coperti dai confronti quantitativi e dal pattern specifico qui sotto).
+//
+// Provata e scartata anche la strada opposta, aggiungere le quantità scritte a parole ("at least",
+// "more than", "fewer than"): riportava gli scatti a 9 su 13 e ne accendeva di nuovi altrettanto
+// inutili, fra cui una domanda sul sideboard. Sono locuzioni troppo comuni.
 export const INDICATORI_REGOLA_CONDIZIONALE = [
-  "state-based action",
   "greater than or equal",
   "less than or equal",
   "equal to or greater",
   "equal to or less",
-  // Copre anche "and it isn't": qualsiasi testo che contenga quella forma contiene già questa.
-  " and it is",
   "if the number of",
+  // Formula esatta della regola dei permanenti leggendari (704.5j, "If two or more legendary
+  // permanents with the same name are controlled by..."): è una condizione a più clausole che non
+  // usa nessuno dei confronti qui sopra, quindi senza questa voce resterebbe senza innesco.
+  // Aggiunta la formula precisa e non il generico "or more", che è comunissimo.
+  "two or more",
   // Regola 709.5 (Stanze/Room e altre carte con riga del tipo condivisa): "As long as this
   // permanent doesn't have [designazione], it doesn't have [caratteristica]". Caso reale: il
   // giudice ha citato correttamente la 709.5 ma ne ha invertito la conclusione (ha detto che il
