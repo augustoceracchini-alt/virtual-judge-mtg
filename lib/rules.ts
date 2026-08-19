@@ -115,7 +115,7 @@ function conVariantePlurale(parola: string): string[] {
   return [parola];
 }
 
-function titoloCapitoloPertinente(titolo: string, parolaChiave: string): boolean {
+function titoloCapitoloPertinente(titolo: string, parolaChiave: string): string | null {
   // Della locuzione si prova solo l'ULTIMA parola, non tutte: in inglese è la testa del sostantivo
   // composto, quella che dice di che cosa si parla ("triggered ABILITY", "continuous EFFECT",
   // "lore COUNTER"). Provarle tutte allargava troppo la selezione: misurato, portava il testo dei
@@ -127,8 +127,16 @@ function titoloCapitoloPertinente(titolo: string, parolaChiave: string): boolean
     parole.length > 1 && ultima.length >= LUNGHEZZA_MINIMA_PAROLA_SINGOLA
       ? [parolaChiave, ultima]
       : [parolaChiave];
-  return termini.some((termine) =>
-    conVariantePlurale(termine).some((variante) => iniziaUnaParolaDi(titolo, variante))
+  // Restituisce QUALE termine ha fatto scattare la corrispondenza, non solo se c'è stata: chi pesa
+  // il titolo per rarità deve pesare il termine che ha davvero corrisposto. Pesare sempre la
+  // locuzione intera dava a "type-changing effect" (4 blocchi, peso 0,387) lo stesso valore alto
+  // anche quando a corrispondere era la sola parola-testa "effect", che compare ovunque: otto
+  // capitoli di fila (609 "Effects", 610, 611, 612...) si ritrovavano a pari punteggio massimo e
+  // occupavano tutti e quattro i posti disponibili, lasciando fuori "Saga Cards".
+  return (
+    termini.find((termine) =>
+      conVariantePlurale(termine).some((variante) => iniziaUnaParolaDi(titolo, variante))
+    ) ?? null
   );
 }
 
@@ -294,9 +302,13 @@ function conBlocchiPadre(selezionati: BloccoRegola[], tuttiIBlocchi: BloccoRegol
 // serve a comprimere la scala: senza, una parola presente in un solo blocco varrebbe cinquecento
 // volte una comune, e un singolo termine raro fuori tema deciderebbe da solo la selezione.
 //
-// La pesatura è applicata DELIBERATAMENTE solo qui e non al punteggio dei blocchi: quel punteggio è
-// tarato su molti casi misurati, mentre questo canale è nuovo e isolato. Estenderla al punteggio
-// principale resta un'ipotesi da misurare a parte.
+// La pesatura nacque isolata al solo voto del Glossario, per prudenza. È stata poi estesa al
+// punteggio dei blocchi e a quello dei titoli, misurando: vedi il caso "Saga: parole chiave reali,
+// coi tipi generici di Scryfall" in scripts/casi-di-prova.mjs, che senza pesatura falliva.
+//
+// Attenzione, quando si pesa un titolo: va pesato il TERMINE CHE HA CORRISPOSTO, che per una
+// locuzione può essere la sola parola-testa (vedi titoloCapitoloPertinente, che infatti lo
+// restituisce). Pesare sempre la locuzione intera è un errore già commesso e misurato.
 function pesoDiRarita(blocchi: BloccoRegola[], parola: string): number {
   let quantiBlocchi = 0;
   for (const blocco of blocchi) {
@@ -458,7 +470,12 @@ const MASSIMO_BLOCCHI_RETE_DI_SICUREZZA = 3;
 // nient'altro.
 const MASSIMO_BLOCCHI_SENZA_CAPITOLI = 15;
 
-type BloccoConPunteggio = { blocco: BloccoRegola; punteggio: number };
+// `punteggio` è pesato per rarità e serve a ORDINARE (quale blocco vince su quale).
+// `paroleDistinte` è il vecchio conteggio intero delle parole chiave trovate e serve alle SOGLIE,
+// che sono tarate su numeri interi: con i soli pesi frazionari (una parola vale fra 0,1 e 0,6)
+// nessun blocco raggiungerebbe più SOGLIA_PUNTEGGIO_BLOCCO_PER_CORPO = 2, e la candidatura per
+// corpo — quella che salva il caso delle Stanze — smetterebbe di scattare del tutto.
+type BloccoConPunteggio = { blocco: BloccoRegola; punteggio: number; paroleDistinte: number };
 
 // I `quanti` blocchi più pertinenti fra quelli dati, scartando chi non ha nemmeno un punto.
 function miglioriBlocchiTra(elementi: BloccoConPunteggio[], quanti: number): BloccoConPunteggio[] {
@@ -476,12 +493,32 @@ function punteggiaBlocchi(
   paroleChiaveFiltrate: string[],
   regoleCitate: string[]
 ): BloccoConPunteggio[] {
+  // Il peso di ciascuna parola si calcola UNA VOLTA SOLA qui: `pesoDiRarita` riscorre tutti i
+  // blocchi, e chiamarlo dentro il ciclo che a sua volta scorre i blocchi renderebbe la ricerca
+  // quadratica (3869 blocchi per ogni parola, per ogni blocco).
+  const pesoPerParola = new Map<string, number>();
+  for (const parola of paroleChiaveFiltrate) {
+    if (!pesoPerParola.has(parola)) {
+      pesoPerParola.set(parola, pesoDiRarita(dati.blocchi, parola));
+    }
+  }
+
   return dati.blocchi.map((blocco) => {
-    let punteggio = paroleChiaveFiltrate.filter((parola) => iniziaUnaParolaDi(blocco.testo, parola)).length;
+    const paroleTrovate = paroleChiaveFiltrate.filter((parola) => iniziaUnaParolaDi(blocco.testo, parola));
+    // Somma dei pesi invece del semplice conteggio: una parola rara come "deathtouch" (pochi
+    // blocchi) conta molto più di un tipo generico come "Land" o "Enchantment", che route.ts
+    // inietta in automatico dalla riga del tipo di Scryfall e che da solo compare in centinaia di
+    // blocchi. Misurato sul caso "Saga: parole chiave reali, coi tipi generici di Scryfall": senza
+    // pesatura quattro tipi generici pareggiavano il voto di "lore counter" e il capitolo 714
+    // "Saga Cards" non entrava affatto negli estratti.
+    let punteggio = 0;
+    for (const parola of paroleTrovate) {
+      punteggio += pesoPerParola.get(parola) ?? 0;
+    }
     if (bloccoCitaUnaDelleRegole(blocco.testo, regoleCitate)) {
       punteggio += 10;
     }
-    return { blocco, punteggio };
+    return { blocco, punteggio, paroleDistinte: paroleTrovate.length };
   });
 }
 
@@ -514,8 +551,9 @@ function selezionaCapitoli(
   // blocco più pertinente di ciascuno vale invece 2, 3, 2 e 5: 709.5j (quello che nomina
   // esplicitamente "door" e "Room") è nettamente il più specifico.
   const puntoMassimoPerCapitolo = new Map<string, number>();
-  for (const { blocco, punteggio } of punteggiBlocchi) {
-    if (punteggio >= SOGLIA_PUNTEGGIO_BLOCCO_PER_CORPO) {
+  for (const { blocco, punteggio, paroleDistinte } of punteggiBlocchi) {
+    // Soglia sul CONTEGGIO e non sul punteggio pesato: vedi il commento su BloccoConPunteggio.
+    if (paroleDistinte >= SOGLIA_PUNTEGGIO_BLOCCO_PER_CORPO) {
       blocchiCorpoPerCapitolo.set(blocco.numeroCapitolo, (blocchiCorpoPerCapitolo.get(blocco.numeroCapitolo) ?? 0) + 1);
     }
     const massimoAttuale = puntoMassimoPerCapitolo.get(blocco.numeroCapitolo) ?? 0;
@@ -525,9 +563,16 @@ function selezionaCapitoli(
   }
 
   const punteggiCapitoli = dati.capitoli.map((capitolo) => {
-    const punteggioTitolo = paroleChiaveFiltrate.filter((parola) =>
-      titoloCapitoloPertinente(capitolo.titolo, parola)
-    ).length;
+    // Anche il titolo è pesato per rarità, per la stessa ragione del corpo: senza pesatura
+    // "Saga Cards" prende un punto per "Saga" esattamente come "Lands" per "Land" ed
+    // "Enchantments" per "Enchantment", i due tipi che route.ts inietta in automatico dalla riga
+    // del tipo di Scryfall. Tutto pareggia a un punto e il pareggio lo decide l'ordine del
+    // documento, che penalizza i capitoli col numero più alto: 714 perdeva così contro 205, 303
+    // e 305. Misurato: pesare i soli blocchi non bastava, il capitolo 714 restava fuori.
+    const punteggioTitolo = paroleChiaveFiltrate.reduce((somma, parola) => {
+      const termine = titoloCapitoloPertinente(capitolo.titolo, parola);
+      return termine === null ? somma : somma + pesoDiRarita(dati.blocchi, termine);
+    }, 0);
     return {
       capitolo,
       punteggioTitolo,
@@ -643,12 +688,32 @@ function raccogliBlocchi(
     });
 }
 
+// Toglie i doppioni ignorando maiuscole e minuscole, tenendo la prima forma incontrata.
+//
+// Serve perché route.ts costruisce le parole chiave concatenando quelle di Gemini con le parole
+// della riga del tipo di Scryfall, senza che nessuno dei due sappia dell'altro: in un turno reale
+// dello scenario benchmark arrivavano "enchantment" (da Gemini) più "Enchantment" DUE VOLTE (da
+// Urza's Saga e da Blood Moon, entrambe incantesimi), e "land" più "Land". Ogni copia votava di
+// nuovo, così il titolo "Enchantments" accumulava tre voti contro l'unico di "Saga Cards" e il
+// capitolo 714 — quello che risponde alla domanda — restava fuori dagli estratti.
+function senzaDoppioni(parole: string[]): string[] {
+  const viste = new Set<string>();
+  return parole.filter((parola) => {
+    const chiave = parola.toLowerCase();
+    if (viste.has(chiave)) {
+      return false;
+    }
+    viste.add(chiave);
+    return true;
+  });
+}
+
 // Cerca nel documento i blocchi di regolamento più pertinenti e li assembla in un unico testo,
 // entro il limite di caratteri. Tre passi, in quest'ordine: dai un punteggio a ogni blocco, scegli
 // i capitoli da guardare, raccogli i blocchi migliori. In coda, ogni blocco selezionato si porta
 // dietro la propria regola padre (vedi conBlocchiPadre).
 function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
-  const paroleChiaveFiltrate = paroleChiave.filter((p) => p.length > 2);
+  const paroleChiaveFiltrate = senzaDoppioni(paroleChiave.filter((p) => p.length > 2));
 
   const punteggiBlocchi = punteggiaBlocchi(dati, paroleChiaveFiltrate, regoleCitate);
   const capitoli = selezionaCapitoli(dati, paroleChiaveFiltrate, regoleCitate, punteggiBlocchi);

@@ -354,7 +354,7 @@ combina SEMPRE da entrambi i lati, indipendentemente da quale sia sbloccato — 
 709.5 dice che il lato bloccato non ha il proprio nome, costo di mana né testo finché resta bloccato,
 quindi con un solo lato sbloccato il costo è solo quello di quel lato.
 
-**Stato: risolto.** `npm run prova-ricerca` passa 12 casi su 13 (fra cui 3 varianti del caso Stanze, con parole
+**Stato: risolto.** `npm run prova-ricerca` passa 13 casi su 13 (fra cui 3 varianti del caso Stanze, con parole
 chiave mirate, povere e generiche), e la stessa domanda provata dal vivo 3 volte di fila dà 3 risposte
 corrette (prima dei fix: 1 su 3). Restano documentate qui sotto le cause e i tentativi falliti, perché
 la diagnosi è più istruttiva della soluzione.
@@ -402,6 +402,43 @@ tocca 532 e pesa 0,110. **La pesatura per rarità è applicata SOLO al voto del 
 punteggio dei blocchi**, che è tarato su molti casi misurati: estenderla resta un'ipotesi da misurare
 a parte.
 
+## Pesatura per rarità estesa a blocchi e titoli (agosto 2026)
+
+`pesoDiRarita` non serve più solo al voto del Glossario: pesa anche il punteggio dei blocchi e
+quello dei titoli di capitolo. **`npm run prova-ricerca` passa da 12/13 a 13/13**, e il caso che
+prima falliva di proposito ("Saga: parole chiave reali, coi tipi generici di Scryfall") ora recupera
+la 714.4.
+
+**La causa vera era doppia, e la prima non era la rarità.** Le parole chiave arrivavano
+**duplicate**: `route.ts` concatena quelle di Gemini con le parole della riga del tipo di Scryfall
+senza che nessuno dei due sappia dell'altro, e nel turno reale arrivavano `enchantment` (da Gemini)
+più `Enchantment` DUE VOLTE (Urza's Saga e Blood Moon sono entrambe incantesimi), più `land` e
+`Land`. Ogni copia votava di nuovo. Risolto da `senzaDoppioni` in `lib/rules.ts`, che deduplica
+ignorando maiuscole e minuscole.
+
+**Il secondo errore è stato commesso durante questo lavoro e vale come regola.** Pesando i titoli,
+il peso va preso dal **termine che ha davvero corrisposto**, non dalla parola chiave di partenza:
+`titoloCapitoloPertinente` prova anche la parola-testa di una locuzione, quindi `type-changing
+effect` (4 blocchi, peso 0,387) corrispondeva a otto capitoli di fila tramite la sola parola
+`effect` (comunissima), e tutti si ritrovavano a pari punteggio massimo occupando i quattro posti
+disponibili. Il capitolo 714 restava fuori **anche dopo** aver introdotto la pesatura. Per questo
+`titoloCapitoloPertinente` ora restituisce il termine che ha corrisposto invece di un booleano.
+
+Prima di intervenire, tre misure sbagliate: pesare i soli blocchi non bastava (714 ancora fuori),
+la deduplicazione da sola nemmeno, e solo la correzione del peso del titolo ha chiuso il caso. **Ogni
+passo è stato misurato con `npm run prova-ricerca`, mai dato per buono.**
+
+**Il costo, misurato e da tenere d'occhio:** `npm run prova-verifica` sale da **8 casi su 13 (62%)
+a 9 su 13 (69%)**. Recuperare le regole giuste porta più testo condizionale negli estratti, quindi
+la FASE E scatta più spesso — ed è la fase più lenta dell'app (7,5-22,8 s). Annulla in parte il
+lavoro di selettività fatto sugli indicatori. È un compromesso fra correttezza e velocità, non un
+guadagno netto.
+
+Impronta SHA256 dell'output completo su 19 casi (13 ufficiali + 6 limite): **10 casi CR su 11
+cambiano** gli estratti, mentre i 2 casi MTR e tutti i 6 casi limite restano **identici**
+(`cercaRegoleTorneo` non è stata toccata). Il testo complessivo scende da 168.091 a 157.367
+caratteri: estratti più mirati, non più abbondanti.
+
 ## Banco di prova manuale (scenario benchmark a 3 turni)
 
 Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug che né `tsc` né
@@ -420,7 +457,9 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
 - Ottimizzazione velocità — **il fronte è uno solo: la FASE E** (7,5-22,8 s misurati, contro 2,3 s dell'intera richiesta quando non scatta; vedi "Dove vanno i secondi"). Primo passo già fatto: indicatori più selettivi, da 9 scatti su 13 a 8. I due passi successivi, non ancora tentati, sono **ridurre il testo che la FASE E riceve** (oggi fino a 36.000 caratteri di regolamenti: misurare prima se la sua durata dipenda davvero dalla lunghezza del prompt, vista la variabilità osservata) e **mostrare subito il verdetto della FASE D correggendolo dopo**, che azzererebbe l'attesa percepita senza toccare la correttezza finale. Infrastruttura, file dati e cold start sono stati misurati ed esclusi. Il dizionario locale IT-EN in `lib/dizionario.ts` **è declassato**: varrebbe meno di un secondo su undici
 - Decisione di prodotto da prendere: se il parse JSON della FASE A fallisce, oggi il giudice risponde senza fonti avvisando l'utente. L'alternativa è restituire un errore. Il log c'è già, la decisione no
-- **Estendere la pesatura per rarità al punteggio dei blocchi.** Oggi `pesoDiRarita` è usata SOLO per il voto del Glossario, dove è nuova e isolata. Il punteggio dei blocchi resta binario (+1 per parola chiave), quindi `Land` ed `Enchantment` — iniettate in automatico dalla riga del tipo Scryfall in `route.ts` — pesano quanto `deathtouch`. È la leva più profonda rimasta, ma tocca il cuore di una funzione tarata su molti casi misurati: va fatta misurando `npm run prova-ricerca` a ogni passo, mai a intuito.
+- ~~**Estendere la pesatura per rarità al punteggio dei blocchi.**~~ **FATTO** (19 agosto 2026, branch `pesatura-rarita`) — vedi "Pesatura per rarità estesa" più sotto per l'esito, il costo e i due errori commessi lungo la strada. Il testo che segue è la formulazione originale del problema, lasciata perché descrive bene il difetto:
+
+  Oggi `pesoDiRarita` è usata SOLO per il voto del Glossario, dove è nuova e isolata. Il punteggio dei blocchi resta binario (+1 per parola chiave), quindi `Land` ed `Enchantment` — iniettate in automatico dalla riga del tipo Scryfall in `route.ts` — pesano quanto `deathtouch`. È la leva più profonda rimasta, ma tocca il cuore di una funzione tarata su molti casi misurati: va fatta misurando `npm run prova-ricerca` a ogni passo, mai a intuito.
 
   **Ora c'è un caso di prova che lo dimostra, e che oggi FALLISCE di proposito**: "Saga: parole chiave reali, coi tipi generici di Scryfall", fra i casi di `npm run prova-ricerca` (perciò il banco di prova sta a 12 su 13, non a 13 su 13 — non è una regressione, ed è il motivo per cui l'uscita resta a codice 0). Misurato il 19 agosto 2026 rieseguendo il banco di prova manuale a 3 turni: **nello scenario benchmark il capitolo 714 "Saga Cards" non viene recuperato affatto**, e il verdetto cita 714.4, 714.2d e 714.3b prendendole dalla memoria del modello (il rilevatore di citazioni senza fonte le registra in `console.error`, due esecuzioni su due). La risposta resta corretta **solo perché la nota di `errata-locali.json` su Urza's Saga enuncia già quelle regole per esteso**: su una Saga priva di errata non arriverebbe nulla. Le parole chiave reali del turno, copiate dal log, sono `["enchantment","land","lore counter","ability","type-changing effect","Enchantment","Land","Urza","Saga","Enchantment"]`: si noti che `Saga` c'è, e nonostante questo il capitolo non entra, perché quattro tipi generici pareggiano il voto di `lore counter`. Il caso gemello con parole scelte a mano (`chapter ability`, `sacrifice`, `state-based action`) passa: **la differenza fra i due è esattamente la misura del problema**, ed è la ragione per cui un banco di prova con vocabolario ideale non bastava a vederlo
 - Osservato e non risolto: in una prova a 3 turni il giudice ha dato la conclusione giusta sull'abilità del terzo capitolo di Urza's Saga appoggiandosi a «la pila si risolve in modo indipendente dai permanenti» invece di citare la 113.7a — che **era** fra gli estratti (verificato nei log). Non è una lacuna di recupero ma variabilità del modello nel citare la fonte che ha davanti; se ricapita, il posto in cui intervenire è il prompt della FASE D, non `lib/rules.ts`. **Non si è ripetuto il 19 agosto 2026**: rieseguito il banco di prova a 3 turni, al terzo turno il giudice cita esplicitamente la 113.7a e la regola risulta fra gli estratti (nessuna segnalazione del rilevatore di citazioni senza fonte per quel numero). Una sola osservazione non chiude il caso, trattandosi di variabilità del modello, ma la voce resta qui senza altre prove a carico
