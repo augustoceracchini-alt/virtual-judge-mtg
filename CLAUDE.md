@@ -439,6 +439,21 @@ cambiano** gli estratti, mentre i 2 casi MTR e tutti i 6 casi limite restano **i
 (`cercaRegoleTorneo` non è stata toccata). Il testo complessivo scende da 168.091 a 157.367
 caratteri: estratti più mirati, non più abbondanti.
 
+**Il costo nascosto, trovato dopo e corretto: la ricerca era diventata 2,5 volte più lenta.**
+`pesoDiRarita` riscorre tutti i 3869 blocchi. In `punteggiaBlocchi` il peso di ogni parola viene
+calcolato una volta sola in una `Map`; in `selezionaCapitoli`, invece, la chiamata era finita
+**dentro** il ciclo sui 146 capitoli, ripetuta per ogni parola chiave. Misurato con le parole chiave
+reali dello scenario benchmark, media su 10 esecuzioni: **196 ms su master, 481 ms qui, 299 ms dopo
+aver memorizzato anche quel peso**. L'impronta SHA256 dell'output completo sui 19 casi è **identica
+prima e dopo la memorizzazione** (`51e47140…`), come dev'essere: una cache cambia il tempo, non il
+risultato. I ~100 ms che restano rispetto a master sono il costo vero della pesatura, e su una
+richiesta da ~10 s non contano.
+
+Regola che ne segue: **ogni volta che si introduce una funzione che scorre tutti i blocchi, va
+cercato ogni punto in cui viene chiamata dentro un ciclo**, non solo quello che si sta scrivendo.
+Il banco di prova non poteva vederlo — `prova-ricerca` verifica quali regole escono, non in quanto
+tempo — quindi va cronometrato a parte.
+
 ## Banco di prova manuale (scenario benchmark a 3 turni)
 
 Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug che né `tsc` né

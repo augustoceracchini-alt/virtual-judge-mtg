@@ -562,6 +562,20 @@ function selezionaCapitoli(
     }
   }
 
+  // Il peso di ciascun termine si calcola UNA VOLTA SOLA, come gia' si fa in punteggiaBlocchi:
+  // pesoDiRarita riscorre tutti i 3869 blocchi, e chiamarla dentro il ciclo sui 146 capitoli per
+  // ogni parola chiave rendeva la ricerca due volte e mezzo piu' lenta (misurato: 196 -> 481 ms).
+  const pesoPerTermine = new Map<string, number>();
+  function pesoMemorizzato(termine: string): number {
+    const gia = pesoPerTermine.get(termine);
+    if (gia !== undefined) {
+      return gia;
+    }
+    const peso = pesoDiRarita(dati.blocchi, termine);
+    pesoPerTermine.set(termine, peso);
+    return peso;
+  }
+
   const punteggiCapitoli = dati.capitoli.map((capitolo) => {
     // Anche il titolo è pesato per rarità, per la stessa ragione del corpo: senza pesatura
     // "Saga Cards" prende un punto per "Saga" esattamente come "Lands" per "Land" ed
@@ -571,7 +585,7 @@ function selezionaCapitoli(
     // e 305. Misurato: pesare i soli blocchi non bastava, il capitolo 714 restava fuori.
     const punteggioTitolo = paroleChiaveFiltrate.reduce((somma, parola) => {
       const termine = titoloCapitoloPertinente(capitolo.titolo, parola);
-      return termine === null ? somma : somma + pesoDiRarita(dati.blocchi, termine);
+      return termine === null ? somma : somma + pesoMemorizzato(termine);
     }, 0);
     return {
       capitolo,
