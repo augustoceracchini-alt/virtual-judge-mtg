@@ -468,6 +468,53 @@ Diagnosticate **tre cause distinte**, tutte corrette:
    blocco padre** (`conBlocchiPadre` in `lib/rules.ts`): le CR sono un albero, "709.5." enuncia il
    principio e "709.5a".."709.5j" lo raffinano, quindi un figlio selezionato si porta dietro il padre.
 
+## Perché il capitolo 113 non viene recuperato (diagnosi del 24 agosto 2026)
+
+Il caso di prova "Abilità sulla pila: parole reali e regole citate del turno" fallisce, e la causa è
+stata misurata capitolo per capitolo. **Il 113 "Abilities" non perde una gara: ne perde tre**, e
+ciascuna da sola basterebbe a escluderlo.
+
+**1. Canale titolo — è nono, e ne passano quattro.** Il suo titolo aggancia solo tramite la
+parola-testa `ability` di "triggered ability", e `ability` è la parola più comune del regolamento:
+peso **0,102**, il più basso in gara. Passano 714 "Saga Cards" (0,228), 303 "Enchantments" (0,171),
+611 e 613 "Continuous Effects" (0,162). **Da tenere presente come rovescio della pesatura per
+rarità: penalizza sistematicamente i capitoli fondamentali**, il cui titolo è generico proprio
+perché definiscono i concetti di base. Il capitolo che dice cos'è un'abilità perde perché "abilità"
+è ovunque.
+
+**2. Canale corpo — era escluso per costruzione, ed è il difetto più netto.** Il 113 ha **8 blocchi
+di corpo pertinenti** e per candidarsi ne bastano **3**. Ma il filtro era `punteggioTitolo === 0`, e
+il 113 ha 0,102. Aveva cioè un punteggio di titolo troppo alto per essere considerato «senza titolo
+pertinente» e troppo basso per vincere fra i titoli: **una terra di nessuno fra i due canali**. La
+conseguenza è contro-intuitiva e vale la pena ricordarla — **un capitolo dal titolo debolmente
+pertinente stava peggio di uno il cui titolo non c'entra nulla**: se il 113 si fosse chiamato
+"Foundations" sarebbe entrato dal canale corpo.
+
+**3. Rete di sicurezza globale — schiacciata dalle regole citate.** Il blocco 113.7a è al **rango 43
+su 969** e la rete ne prende 3. I primi tre valgono ~10,3-10,5 punti: sono quelli che nominano
+`714.4`, `305.7` e `603.7`, e ogni regola citata vale **+10**. Le tre regole che l'utente si porta
+dietro dai turni precedenti saturano da sole l'intera rete di sicurezza.
+
+**Due tentativi scritti, misurati e SCARTATI** (nessuno dei due fa passare un caso in più):
+
+- **Togliere la terra di nessuno**, candidando per corpo i capitoli che il canale titolo non ha
+  preso invece di quelli col titolo a zero. Concettualmente giusto e il 113 diventa candidabile, ma
+  resta **terzo** dietro 702 (0,724) e 608 (0,702) sui due posti disponibili, perché il suo punto
+  massimo è 0,405. Costo: **+1,7%** di testo negli estratti.
+- **Impedire ai canali di sprecare i propri posti**: il canale corpo dava un posto al capitolo 603
+  (punto massimo 10,283, cioè il bonus della regola citata, non pertinenza vera) che sarebbe entrato
+  comunque dal canale delle regole citate; e il Glossario scartava i duplicati DOPO il taglio ai
+  primi due, così i suoi posti andavano a 205 e 613 già ammessi altrove e il canale restava a mani
+  vuote. Corretti entrambi, il 113 resta comunque **quinto** fra i candidati del Glossario. Costo:
+  **+16%** di testo.
+
+**L'idea non ancora provata, e la più promettente: la co-occorrenza fra canali.** Il 113 è terzo per
+corpo e quinto per Glossario — mai nei primi due, ma **è l'unico capitolo che compare in entrambe le
+classifiche**. Due canali indipendenti che indicano lo stesso capitolo sono un segnale più forte di
+un buon piazzamento in uno solo, e premiarlo non allargherebbe la selezione (che è ciò che ha reso
+inaccettabili i due tentativi qui sopra): sposterebbe soltanto l'ordine. Da misurare, non da dare
+per buona.
+
 **Tentativi fatti e scartati** (per NON riprovarli senza un'idea nuova, non misurata):
 - **Seguire i rimandi "See rule NNN" che Wizards scrive dentro le regole** (24 agosto 2026), sul modello di quanto già si fa col Glossario: un blocco selezionato tira dentro anche la regola precisa a cui rimanda, un solo salto, ignorando i rimandi a un capitolo intero. Nelle CR ci sono 243 rimandi a una regola precisa. Scritto, misurato e **rimosso**: aggiungeva 9.170 caratteri agli estratti sui 14 casi di prova (+6%) senza far passare **nessun** caso in più. L'idea nasceva dal fatto che la 608.2h contiene proprio "See rule 113.7a", ma il caso che doveva risolvere non ha la 608.2h fra gli estratti, quindi il rimando non c'è da seguire.
 - Spareggio fra capitoli a pari punteggio di titolo tramite conteggio dei blocchi nel corpo: regredisce
