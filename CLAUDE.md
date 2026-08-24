@@ -300,10 +300,31 @@ serie paga anche l'apertura della connessione TLS del client, che da sola vale ~
 file statico**, dove nessuna funzione viene invocata — chi misura senza tenerne conto attribuisce al
 server un secondo che è del proprio client.
 
-Resta non misurata **la primissima invocazione di un deploy nuovo**: è l'unica ipotesi rimasta per i
-54,3 s originali, dato che quelle tre misure furono prese subito dopo un rilascio. Se regge, il
-ritardo colpisce solo chi apre l'app per primo dopo un rilascio, e non vale la pena inseguirlo.
-Prova da fare al prossimo rilascio vero, senza forzarne uno apposta.
+**Misurata il 24 agosto 2026, ed era l'ultima ipotesi in piedi per i 54,3 s originali: cade anche
+quella.** La primissima invocazione di un deploy nuovo costa **1091 ms**, contro 311 / 190 / 179 ms
+delle successive. Lo scarto rispetto a una richiesta calda (~185 ms) è di **circa 900 ms**: appena
+~260 ms in più del risveglio ordinario (~640 ms). Non resta quindi alcuna spiegazione plausibile per
+i 54,3 s se non un errore della misura di allora.
+
+Condizioni della prova: deploy dichiarato `success` alle 00:07:59Z e misura alle 00:15:53Z, cioè
+otto minuti di silenzio, con la connessione TLS già aperta su `manifest.json` (479 ms il primo
+colpo, 205 ms il secondo) e la sonda gratuita `{"domanda":""}` che riceve 400 prima di Gemini. Una
+misura sola, non ripetibile senza un altro rilascio.
+
+**Come sapere che un deploy nuovo è online — metodo che funziona, al posto di quello vecchio.**
+Cercare una stringa nuova dentro il pacchetto JavaScript servito **non funziona per i rilasci che
+toccano solo il lato server**: questo cambiava `lib/rules.ts` e i chunk del browser sono rimasti
+identici, perché `app/page.tsx` non era stato toccato. Funziona invece l'elenco dei deploy che
+Vercel registra su GitHub:
+
+```
+gh api "repos/{owner}/{repo}/deployments" --jq '.[0:3] | .[] | "\(.created_at)  \(.sha[0:7])  id=\(.id)"'
+gh api "repos/{owner}/{repo}/deployments/<id>/statuses" --jq '.[0].state'
+```
+
+**Tranello da evitare:** il filtro `?sha=` vuole lo SHA **completo**. Con quello abbreviato
+restituisce vuoto senza errore, e un'attesa automatica costruita così resta ferma per sempre —
+è successo, e ha tenuto bloccato il controllo per otto minuti.
 
 Un tentativo del 19 agosto 2026 **è fallito, e il motivo vale come regola**: il commit pubblicato
 toccava solo CLAUDE.md, che non entra nella build. Il pacchetto servito ai browser era quindi
