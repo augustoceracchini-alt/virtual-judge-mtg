@@ -454,6 +454,22 @@ cercato ogni punto in cui viene chiamata dentro un ciclo**, non solo quello che 
 Il banco di prova non poteva vederlo — `prova-ricerca` verifica quali regole escono, non in quanto
 tempo — quindi va cronometrato a parte.
 
+**Verificato dal vivo col banco di prova manuale a 3 turni (24 agosto 2026), ed e' il risultato che
+conta.** Nello scenario benchmark il capitolo **714 arriva ora davvero negli estratti** (capitoli
+recuperati: 1, 107, 122, 205, 3, 303, 305, 4, 505, 702, 703, 707, **714**), mentre prima non
+compariva affatto. Il rilevatore di citazioni senza fonte, che prima segnalava **714.4, 714.2d e
+714.3b** tutte e tre, ora segnala **solo 714.2d**: la 714.4 — la regola che decide il caso — viene
+finalmente dalla fonte e non dalla memoria del modello. Tutti e tre i turni danno la conclusione
+corretta. Tempi osservati: 10,9 s / 14,7 s / 9,4 s, con la FASE E che vale 7,7 / 10,0 / 6,2 s, cioe'
+sempre due terzi del totale.
+
+Restano due sbavature, **entrambe preesistenti e nessuna delle due una regressione**: il blocco
+714.2d continua a non essere selezionato dentro il capitolo (che pero' ora c'e'), e al terzo turno
+il giudice ha di nuovo parafrasato la 113.7a («un'abilita' sulla pila e' un oggetto indipendente
+dalla fonte») invece di citarne il numero — con la regola **presente negli estratti**, verificato nei
+log. E' la voce gia' registrata in "Cosa manca ancora": il posto in cui intervenire e' il prompt
+della FASE D, non `lib/rules.ts`.
+
 ## Banco di prova manuale (scenario benchmark a 3 turni)
 
 Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug che né `tsc` né
@@ -477,7 +493,7 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
   Oggi `pesoDiRarita` è usata SOLO per il voto del Glossario, dove è nuova e isolata. Il punteggio dei blocchi resta binario (+1 per parola chiave), quindi `Land` ed `Enchantment` — iniettate in automatico dalla riga del tipo Scryfall in `route.ts` — pesano quanto `deathtouch`. È la leva più profonda rimasta, ma tocca il cuore di una funzione tarata su molti casi misurati: va fatta misurando `npm run prova-ricerca` a ogni passo, mai a intuito.
 
   **Ora c'è un caso di prova che lo dimostra, e che oggi FALLISCE di proposito**: "Saga: parole chiave reali, coi tipi generici di Scryfall", fra i casi di `npm run prova-ricerca` (perciò il banco di prova sta a 12 su 13, non a 13 su 13 — non è una regressione, ed è il motivo per cui l'uscita resta a codice 0). Misurato il 19 agosto 2026 rieseguendo il banco di prova manuale a 3 turni: **nello scenario benchmark il capitolo 714 "Saga Cards" non viene recuperato affatto**, e il verdetto cita 714.4, 714.2d e 714.3b prendendole dalla memoria del modello (il rilevatore di citazioni senza fonte le registra in `console.error`, due esecuzioni su due). La risposta resta corretta **solo perché la nota di `errata-locali.json` su Urza's Saga enuncia già quelle regole per esteso**: su una Saga priva di errata non arriverebbe nulla. Le parole chiave reali del turno, copiate dal log, sono `["enchantment","land","lore counter","ability","type-changing effect","Enchantment","Land","Urza","Saga","Enchantment"]`: si noti che `Saga` c'è, e nonostante questo il capitolo non entra, perché quattro tipi generici pareggiano il voto di `lore counter`. Il caso gemello con parole scelte a mano (`chapter ability`, `sacrifice`, `state-based action`) passa: **la differenza fra i due è esattamente la misura del problema**, ed è la ragione per cui un banco di prova con vocabolario ideale non bastava a vederlo
-- Osservato e non risolto: in una prova a 3 turni il giudice ha dato la conclusione giusta sull'abilità del terzo capitolo di Urza's Saga appoggiandosi a «la pila si risolve in modo indipendente dai permanenti» invece di citare la 113.7a — che **era** fra gli estratti (verificato nei log). Non è una lacuna di recupero ma variabilità del modello nel citare la fonte che ha davanti; se ricapita, il posto in cui intervenire è il prompt della FASE D, non `lib/rules.ts`. **Non si è ripetuto il 19 agosto 2026**: rieseguito il banco di prova a 3 turni, al terzo turno il giudice cita esplicitamente la 113.7a e la regola risulta fra gli estratti (nessuna segnalazione del rilevatore di citazioni senza fonte per quel numero). Una sola osservazione non chiude il caso, trattandosi di variabilità del modello, ma la voce resta qui senza altre prove a carico
+- Osservato e non risolto: in una prova a 3 turni il giudice ha dato la conclusione giusta sull'abilità del terzo capitolo di Urza's Saga appoggiandosi a «la pila si risolve in modo indipendente dai permanenti» invece di citare la 113.7a — che **era** fra gli estratti (verificato nei log). Non è una lacuna di recupero ma variabilità del modello nel citare la fonte che ha davanti; se ricapita, il posto in cui intervenire è il prompt della FASE D, non `lib/rules.ts`. Non si era ripetuto il 19 agosto 2026, ma **si è ripetuto il 24 agosto 2026**: al terzo turno il giudice ha di nuovo parafrasato («un'abilità che si trova sulla pila è un oggetto indipendente dalla fonte che l'ha generata») senza il numero, con la 113.7a presente negli estratti — verificato cercandola nei log. Due osservazioni su tre esecuzioni: non è più un sospetto isolato, ed è ora il candidato più concreto per un intervento sul prompt della FASE D
 - Semplificazioni valutate e **deliberatamente NON applicate** (vedi "Snellimento del codice" più sotto per il metodo, e non riproporle senza un'idea nuova): accorpare in `lib/scryfall.ts` le cinque ripetizioni dello schema "chiama → registra lo status → distingui 404 da guasto"; dare un nome al filtro `paroleChiave.filter((p) => p.length > 2)`; riscrivere come ciclo la cascata fuzzy → autocomplete → ricerca testuale; mettere in una costante condivisa la stringa `===OPZIONI_CHIARIMENTO===`, oggi ripetuta in `lib/prompts.ts`, `route.ts` e `app/page.tsx`
 - Le note di lavoro personali (fra cui `REVISIONE.md`) sono in `note-di-lavoro/`, cartella esclusa da git
 
