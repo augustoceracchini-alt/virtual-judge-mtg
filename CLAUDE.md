@@ -21,6 +21,8 @@ Chi sviluppa (Augusto) non sa programmare. Ogni istruzione data va accompagnata 
 
 - `npm run prova-verifica` — misura su quanti casi scatta la FASE E, il doppio controllo del verdetto, e quale indicatore l'ha fatta scattare. Gratuito e istantaneo come `prova-ricerca` (non chiama Gemini): serve perché la FASE E è la fase più costosa dell'app, quindi ogni modifica a `lib/verifica.ts` va misurata qui prima e dopo. Copre solo l'innesco testuale, non quello delle citazioni senza fonte, quindi il numero che riporta è il minimo
 
+- `npm run sonda-fase-e` — sonda diagnostica della FASE E: misura **dove** va il suo tempo, riportando i token letti, quelli di ragionamento interno e quelli scritti. `-- 256` prova un budget di ragionamento, `-- 256 sbagliato` sottopone un verdetto con la conclusione invertita per controllare che la correzione scatti ancora. **Chiama Gemini davvero**, quindi consuma la quota stretta di `gemini-3.6-flash` (~20/giorno): va usata con parsimonia, non in cicli
+
 - `npm run prova-copertura` — sonda di misura (non un test): interroga l'API di Board Games Stack Exchange e riporta, per una lista di casi, se esiste una discussione pertinente, quanti voti ha, quando è stata modificata e quali numeri di regola CR cita. Non chiama Gemini e non tocca l'app; consuma la quota gratuita dell'API (300 richieste/giorno senza chiave, una per caso)
 
 Non esiste una suite di test automatici end-to-end. Il metodo di verifica standard del progetto è: avviare `npm run dev`, poi testare l'endpoint con `Invoke-RestMethod` da PowerShell (vedi "Note di stile" sotto) e/o dal browser; per la sola ricerca nei regolamenti c'è `npm run prova-ricerca`, e per il comportamento end-to-end lo scenario descritto in "Banco di prova manuale" più sotto.
@@ -259,6 +261,56 @@ undici**: è il bersaglio sbagliato, ed è stato declassato in «Cosa manca anco
 Misurato: **9 casi su 13 (69%) prima**, **8 su 13 (62%) dopo** aver reso più selettivi gli
 indicatori (vedi "Quando scatta la FASE E" più sotto). Attenzione a leggere quella percentuale: i
 casi di prova sono scelti per essere difficili, quindi sovrastimano la frequenza reale.
+
+### Il tempo della FASE E è ragionamento, non lettura (misurato il 24 agosto 2026)
+
+**L'ipotesi che il progetto si era annotato era sbagliata, e la misura la smentisce.** Si credeva
+che la FASE E fosse lenta perché riceve fino a 36.000 caratteri di regolamenti, e il piano era
+ridurli. Misurando i token di una chiamata reale con `npm run sonda-fase-e`:
+
+| | token | |
+|---|---|---|
+| letti (i regolamenti) | 5.135 | il prefill, veloce e parallelo |
+| **ragionamento interno** | **5.303** | **è qui che va il tempo** |
+| scritti (il verdetto) | 191 | trascurabile |
+
+27,6 secondi per quella chiamata. Il ragionamento interno vale 28 volte l'output visibile e supera
+persino l'input: accorciare il prompt avrebbe tagliato solo il prefill, cioè una frazione minima.
+Vale la stessa morale del dizionario IT-EN e del cold start — **il bersaglio si sceglie dopo aver
+misurato, non prima**.
+
+**La leva vera è `BUDGET_RAGIONAMENTO_VERIFICA` in `route.ts`**, oggi a 256. Confronti appaiati,
+stessa domanda e stesso contesto, con e senza budget:
+
+| Caso | ragionamento | durata FASE E |
+|---|---|---|
+| Stanza/Room (nessuna errata) senza budget | 1.705 | 10,8 s |
+| Stanza/Room **con budget** | **733** | **5,9 s** |
+| Urza's Saga senza budget | 1.183 | 8,7 s |
+| Urza's Saga **con budget** | **779** | **6,9 s** |
+| sonda isolata senza budget | 5.303 | 27,6 s |
+| sonda isolata **con budget** | **913** | **7,6 s** |
+
+**Il budget non è un tetto rigido**: chiedendo 256 il modello ne ha usati fra 733 e 2.164 a seconda
+del caso. Orienta il ragionamento, non lo tronca — ed è probabilmente per questo che la correttezza
+regge.
+
+**Verificato in tutte e due le direzioni, perché una sola non basta**: con il budget attivo la FASE E
+continua a **correggere** un verdetto con la conclusione invertita, e a restituire **byte per byte
+identico** un verdetto già corretto. Un budget che accorcia i tempi ma non fa più scattare la
+correzione sarebbe un guadagno finto; uno che fa riscrivere un verdetto giusto sarebbe un danno.
+
+**Attenzione a quale domanda si usa per misurare: il benchmark Urza's Saga è il caso MENO
+rappresentativo.** La nota di `errata-locali.json` gli serve la conclusione quasi pronta, quindi il
+modello ragiona poco (1.183 token) e il guadagno sembra modesto. Su una domanda senza errata il
+ragionamento parte più alto e il taglio è molto maggiore. Le misure della FASE E vanno prese su
+domande **senza** errata.
+
+I token di ragionamento sono ora nei log di debug (`[DEBUG] FASE E, token: ...`), e sono il segnale
+su cui giudicare: **la durata da sola inganna**, perché varia molto anche a parità di domanda.
+Servono anche ad accorgersi se il budget smettesse di fare effetto in silenzio — la libreria
+`@google/generative-ai` è deprecata e non conosce `thinkingConfig` nei suoi tipi, tanto che in
+`route.ts` il campo passa per un cast esplicito.
 
 ### Quando scatta la FASE E: indicatori resi più selettivi
 
@@ -507,7 +559,7 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
    un'abilità sulla pila esiste indipendentemente dalla propria fonte (113.7a).
 
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
-- Ottimizzazione velocità — **il fronte è uno solo: la FASE E** (7,5-22,8 s misurati, contro 2,3 s dell'intera richiesta quando non scatta; vedi "Dove vanno i secondi"). Primo passo già fatto: indicatori più selettivi, da 9 scatti su 13 a 8. I due passi successivi, non ancora tentati, sono **ridurre il testo che la FASE E riceve** (oggi fino a 36.000 caratteri di regolamenti: misurare prima se la sua durata dipenda davvero dalla lunghezza del prompt, vista la variabilità osservata) e **mostrare subito il verdetto della FASE D correggendolo dopo**, che azzererebbe l'attesa percepita senza toccare la correttezza finale. Infrastruttura, file dati e cold start sono stati misurati ed esclusi. Il dizionario locale IT-EN in `lib/dizionario.ts` **è declassato**: varrebbe meno di un secondo su undici
+- Ottimizzazione velocità — **il fronte è uno solo: la FASE E**. Due passi fatti: indicatori più selettivi (da 9 scatti su 13 a 8) e **budget di ragionamento**, che l'ha quasi dimezzata (vedi "Il tempo della FASE E è ragionamento" più sotto). L'idea che era scritta qui, «ridurre il testo che la FASE E riceve», **è stata misurata ed è sbagliata**: il tempo non sta nella lettura. Resta da provare **mostrare subito il verdetto della FASE D correggendolo dopo**, che azzererebbe l'attesa percepita senza toccare la correttezza finale — è ora l'unica leva grossa rimasta, ed è architetturale, non di prompt. Infrastruttura, file dati e cold start sono stati misurati ed esclusi. Il dizionario locale IT-EN in `lib/dizionario.ts` **è declassato**: varrebbe meno di un secondo su dieci
 - Decisione di prodotto da prendere: se il parse JSON della FASE A fallisce, oggi il giudice risponde senza fonti avvisando l'utente. L'alternativa è restituire un errore. Il log c'è già, la decisione no
 - ~~**Estendere la pesatura per rarità al punteggio dei blocchi.**~~ **FATTO** (19 agosto 2026, branch `pesatura-rarita`) — vedi "Pesatura per rarità estesa" più sotto per l'esito, il costo e i due errori commessi lungo la strada. Il testo che segue è la formulazione originale del problema, lasciata perché descrive bene il difetto:
 

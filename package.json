@@ -9,7 +9,8 @@
     "lint": "eslint",
     "prova-ricerca": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-ricerca.mjs",
     "prova-copertura": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-copertura.mjs",
-    "prova-verifica": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-verifica.mjs"
+    "prova-verifica": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-verifica.mjs",
+    "sonda-fase-e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/sonda-fase-e.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

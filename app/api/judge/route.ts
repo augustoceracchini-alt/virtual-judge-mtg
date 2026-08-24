@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
+import { GoogleGenerativeAI, GenerativeModel, GenerationConfig } from "@google/generative-ai";
 import { NextRequest, NextResponse } from "next/server";
 import {
   cercaRegolePertinenti,
@@ -37,6 +37,28 @@ const MASSIMO_CARATTERI_CRONOLOGIA = 16000;
 // domande con regole condizionali complesse, non per ogni domanda.
 const MODELLO_STANDARD = "gemini-3.5-flash-lite";
 const MODELLO_VERIFICA = "gemini-3.6-flash";
+
+// Quanto ragionamento interno concedere al revisore della FASE E, che è di gran lunga la fase più
+// lenta dell'app.
+//
+// **Misurato, e smentisce l'ipotesi che era scritta qui prima.** Il tempo della FASE E non se ne va
+// nel LEGGERE i regolamenti né nello SCRIVERE il verdetto: se ne va nel ragionamento interno. Su
+// una chiamata reale senza alcun limite: 5.135 token letti, 191 scritti e **5.303 di ragionamento**,
+// per 27,6 secondi. Ridurre il testo in ingresso — la strada che il progetto si era annotato —
+// avrebbe quindi tagliato solo il prefill, cioè una frazione minima.
+//
+// Con questo valore la stessa verifica scende a 7,6-13,0 secondi, e continua a fare **entrambe** le
+// cose per cui la FASE E esiste: corregge un verdetto con la conclusione invertita, e restituisce
+// invece byte per byte identico un verdetto già corretto (verificato in tutti e due i sensi sullo
+// scenario benchmark Urza's Saga + Blood Moon, e senza passare al modello la nota di
+// errata-locali.json, quindi partendo dalle sole regole).
+//
+// Non è un tetto rigido: il modello ne usa quanti gliene servono (misurati 913 token su un caso e
+// 2.164 su un altro, a parità di richiesta), quindi il valore ORIENTA il ragionamento, non lo
+// tronca. Abbassarlo ancora non è stato provato; alzarlo riporta i tempi su (a 1024: 15,0-20,9 s).
+// Prima di cambiarlo, rimisurare con scripts/sonda-fase-e.mjs — a occhio non si vede nulla, perché
+// la durata della FASE E varia molto anche a parità di domanda.
+const BUDGET_RAGIONAMENTO_VERIFICA = 256;
 
 function eMessaggioCronologiaValido(valore: unknown): valore is MessaggioCronologia {
   if (valore === null || typeof valore !== "object") {
@@ -166,9 +188,36 @@ async function eseguiVerificaFaseE(genAI: GoogleGenerativeAI, input: InputPrompt
   logDebug("[DEBUG] Prompt di verifica (FASE E) inviato a Gemini:", promptVerifica);
 
   try {
-    const modelVerifica = genAI.getGenerativeModel({ model: MODELLO_VERIFICA });
+    // Il cast serve perché @google/generative-ai è deprecata e i suoi tipi non conoscono
+    // `thinkingConfig`, che l'API invece accetta: verificato dal vivo con scripts/sonda-fase-e.mjs,
+    // dove i token di ragionamento riportati da Gemini scendono da 5.303 a 913-2.164 quando il
+    // campo è presente. Se un giorno si passa alla libreria nuova (@google/genai), il campo è
+    // previsto dai suoi tipi e questo cast va tolto.
+    const configurazioneVerifica = {
+      thinkingConfig: { thinkingBudget: BUDGET_RAGIONAMENTO_VERIFICA },
+    } as unknown as GenerationConfig;
+
+    const modelVerifica = genAI.getGenerativeModel({
+      model: MODELLO_VERIFICA,
+      generationConfig: configurazioneVerifica,
+    });
     const risultatoVerifica = await modelVerifica.generateContent(promptVerifica);
     const rispostaVerificata = risultatoVerifica.response.text().trim();
+
+    // I token di ragionamento sono il segnale su cui giudicare la FASE E, molto più della sua
+    // durata: i secondi variano parecchio anche a parità di domanda, mentre questi numeri dicono
+    // direttamente quanto il modello ha pensato — che è dove va il tempo. Servono per accorgersi
+    // che BUDGET_RAGIONAMENTO_VERIFICA ha smesso di fare effetto, cosa che può succedere in
+    // silenzio se Google cambia il nome del campo o la libreria deprecata smette di inoltrarlo.
+    const consumo = risultatoVerifica.response.usageMetadata;
+    logDebug(
+      "[DEBUG] FASE E, token: letti",
+      consumo?.promptTokenCount,
+      "| ragionamento",
+      (consumo as { thoughtsTokenCount?: number } | undefined)?.thoughtsTokenCount,
+      "| scritti",
+      consumo?.candidatesTokenCount
+    );
 
     logDebug("[DEBUG] Risposta della verifica (FASE E):", rispostaVerificata);
 
