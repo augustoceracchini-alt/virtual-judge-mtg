@@ -481,10 +481,20 @@ prenderla c'è ora `npm run sonda-fase-e -- 256 libero`, che disattiva la genera
 lasciando il resto identico. Serve ripeterla almeno tre volte per parte, e la quota di
 `gemini-3.6-flash` è di ~20 richieste al giorno: sono due giorni di misure, non un pomeriggio.
 
-**Idea da valutare, non ancora provata:** far restituire alla FASE E una DECISIONE
+**Idea da valutare, e attenzione a cosa NON risolve:** far restituire alla FASE E una DECISIONE
 (`CONFERMO` / `CORREGGO` più il testo nuovo) invece di sempre l'intero verdetto, e sul ramo
-`CONFERMO` restituire da codice il verdetto della FASE D. Oggi si chiede a un modello generativo di
-fare da fotocopiatrice, e la 2ª esecuzione mostra cosa succede quando decide di non esserlo.
+`CONFERMO` restituire da codice il verdetto della FASE D. Toglie di mezzo la parafrasi-in-conferma,
+perché oggi si chiede a un modello generativo di fare da fotocopiatrice. **Ma non avrebbe impedito
+il caso misurato qui**: nella 2ª esecuzione il revisore era convinto che la Saga si sacrifichi,
+quindi avrebbe risposto `CORREGGO` e fornito lo stesso il testo sbagliato. Il problema vero non è
+come la FASE E consegna la propria conclusione, è che la conclusione stessa cambia fra un'esecuzione
+e l'altra.
+
+**Il passo successivo è quindi una misura, non una modifica**: ripetere `npm run sonda-fase-e -- 256`
+tre volte e contare quante volte stravolge il verdetto corretto. Se capita una volta su due è un
+problema grave e urgente; se capita una volta su dieci è un rischio da tenere d'occhio. Finché quel
+numero non c'è, qualunque intervento su questa fase sarebbe deciso a intuito — che su questa fase, e
+in questo progetto, è già costato tre diagnosi sbagliate.
 
 ### Quando scatta la FASE E: indicatori resi più selettivi
 
