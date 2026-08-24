@@ -205,14 +205,15 @@ mai aggiornato dopo che Wizards ha cambiato la regola generale corrispondente), 
 vedi "Correzioni manuali a rulings superati" sopra. Non generalizza a interazioni mai viste: copre
 solo i casi annotati a mano.
 
-La stessa domanda dovrebbe ricevere la stessa risposta, ma non è una garanzia. Tutte e tre le
-chiamate all'IA girano con la generazione deterministica (temperatura 0), che spegne il sorteggio fra
-le continuazioni possibili: prima non era impostata, e la stessa domanda riceveva risposte diverse a
-ogni invio. Google però non promette risposte identiche bit per bit nemmeno a temperatura 0, e
-soprattutto resta una fonte di variabilità a monte: da una domanda formulata in modo appena diverso
-la fase A può estrarre parole chiave diverse, e parole diverse portano a estratti di regolamento
-diversi, quindi a un verdetto che parte da fonti diverse. Quanto le due cose incidano davvero non è
-ancora stato misurato sul campo; la sonda che serve a misurarlo è descritta in `CLAUDE.md`.
+**La stessa domanda non riceve la stessa risposta, parola per parola.** Le chiamate all'IA girano con
+la generazione deterministica (temperatura 0), ma misurando 10 ripetizioni della stessa domanda sono
+tornati 10 testi diversi, esattamente come senza. Google non promette risposte identiche bit per bit
+nemmeno a temperatura 0, e su questo modello non lo sono affatto.
+
+Quello che nella stessa misura è rimasto **stabile è la sostanza**: su 20 esecuzioni la conclusione
+non è mai stata sbagliata, e cambiava solo il modo di dirla. Resta però la variabilità a monte: da
+una domanda formulata in modo appena diverso la fase A estrae parole chiave diverse, e parole diverse
+portano a estratti di regolamento diversi. I numeri completi sono in `CLAUDE.md`.
 
 Effetto collaterale voluto: a temperatura 0 anche gli errori diventano stabili. Se il giudice sbaglia
 un caso lo sbaglia sempre allo stesso modo, invece di azzeccarlo per fortuna una volta su cinque — ed

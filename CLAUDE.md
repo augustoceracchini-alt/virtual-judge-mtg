@@ -280,11 +280,36 @@ conta è l'ultimo (varianti di conclusione): se è già 1 mentre le varianti di 
 strumento è coerente nella sostanza e cambia solo il modo di dirlo, e i lavori più grossi
 (memorizzazione della risposta, nucleo strutturato) non servono.
 
-**Non ancora misurata dal vivo**: la modifica è stata verificata con `tsc`, `eslint`, `npm run
-build` e `npm run prova-ricerca` (14/14, invariato), ma la sonda richiede una chiave API. I due
-numeri prima/dopo restano da prendere, e con essi anche `npm run sonda-fase-e` nelle due direzioni
-(verdetto giusto restituito identico, verdetto invertito corretto), perché la FASE E ha ricevuto la
-nuova configurazione accanto al proprio budget di ragionamento.
+### Misurata: NON produce risposte ripetibili (24 agosto 2026)
+
+10 ripetizioni per parte, scenario Stanza, con e senza `libero`:
+
+| | prima | dopo |
+|---|---|---|
+| FASE A, vocabolari distinti | 6 su 10 | 4 su 10 |
+| FASE D, varianti di testo | **10 su 10** | **10 su 10** |
+| FASE D, varianti di regole citate | 8 su 10 | 7 su 10 |
+| FASE D, varianti di conclusione | 2 (9 corrette + 1 non classificabile) | 2 (8 corrette + 2 non classificabili) |
+
+**Dieci testi diversi su dieci, prima e dopo: la temperatura 0 non ha alcun effetto visibile.** Non è
+un errore di applicazione — verificato leggendo `node_modules/@google/generative-ai/dist/index.mjs`
+alla riga 1375, la libreria inoltra davvero il `generationConfig` del modello dentro ogni richiesta.
+È `gemini-3.5-flash-lite` che a temperatura 0 non ripete se stesso.
+
+**Il calo della FASE A (6 → 4 vocabolari) è l'unico movimento, ed è troppo debole per chiamarlo
+risultato**: su dieci esecuzioni può essere benissimo il caso.
+
+**La misura a 5 ripetizioni diceva il contrario, ed era rumore.** Aveva dato 2 varianti di
+conclusione prima (di cui una sbagliata) e 1 dopo, e sembrava una vittoria netta. A 10 ripetizioni
+non compare nessuna conclusione sbagliata da nessuna delle due parti. È la ragione per cui il
+campione piccolo era stato dichiarato insufficiente prima di guardarlo: la tentazione di fermarsi al
+numero che conferma l'ipotesi era esattamente lì.
+
+**Cosa se ne fa.** L'impostazione resta, perché è quella giusta in linea di principio e non costa
+nulla, ma **non va contata come la soluzione al problema della coerenza**: su questo scenario la
+conclusione era già stabile (nessun verdetto sbagliato in 20 esecuzioni) e a variare era solo la
+prosa. Se la coerenza testuale conta davvero, la strada che resta è la memorizzazione della risposta
+su chiave di idempotenza — l'unica che non dipende dal modello.
 
 ## Segnalazioni degli utenti (`/api/segnalazione`)
 
