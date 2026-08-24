@@ -25,6 +25,8 @@ Chi sviluppa (Augusto) non sa programmare. Ogni istruzione data va accompagnata 
 
 - `npm run sonda-citazioni [ripetizioni]` — misura se il giudice CITA il numero di una regola che ha davvero fra gli estratti, ripetendo la stessa domanda N volte sulla sola FASE D e contando. Usa `gemini-3.5-flash-lite`, quota generosa, quindi si può ripetere — a differenza di `sonda-fase-e`. Serve perché «il modello parafrasa invece di citare» è un'impressione finché non la si conta: usata così, ha smentito una diagnosi che il progetto portava avanti da tre osservazioni (5 citazioni su 5)
 
+- `npm run sonda-coerenza [ripetizioni] [libero]` — misura la COERENZA: la stessa domanda ripetuta N volte, e quante versioni diverse tornano. Va lanciata **due volte**, `npm run sonda-coerenza` e `npm run sonda-coerenza -- 5 libero` (quest'ultima disattiva la generazione deterministica e mostra com'era prima), e confrontata. Misura separatamente la FASE A (l'amplificatore) e la FASE D, e per quest'ultima riporta tre numeri distinti: varianti di testo, di regole citate e di conclusione — **solo l'ultimo conta per l'utente**, e può benissimo essere 1 mentre il primo è 5. Usa `gemini-3.5-flash-lite`, quota generosa: 2 × N richieste, quindi si può ripetere
+
 - `npm run prova-copertura` — sonda di misura (non un test): interroga l'API di Board Games Stack Exchange e riporta, per una lista di casi, se esiste una discussione pertinente, quanti voti ha, quando è stata modificata e quali numeri di regola CR cita. Non chiama Gemini e non tocca l'app; consuma la quota gratuita dell'API (300 richieste/giorno senza chiave, una per caso)
 
 Non esiste una suite di test automatici end-to-end. Il metodo di verifica standard del progetto è: avviare `npm run dev`, poi testare l'endpoint con `Invoke-RestMethod` da PowerShell (vedi "Note di stile" sotto) e/o dal browser; per la sola ricerca nei regolamenti c'è `npm run prova-ricerca`, e per il comportamento end-to-end lo scenario descritto in "Banco di prova manuale" più sotto.
@@ -47,9 +49,11 @@ Non esiste una suite di test automatici end-to-end. Il metodo di verifica standa
 - `lib/prompts.ts` — testo dei tre prompt inviati a Gemini (FASI A, D, E). Assembla soltanto, non decide nulla: le fasi e il loro ordine stanno in `route.ts`. Il testo è il risultato di molte iterazioni, va modificato con prudenza
 - `lib/debug.ts` — `DEBUG_ATTIVO` e `logDebug` condivisi da `route.ts` e `lib/scryfall.ts`
 - `lib/limite.ts` — `richiestaConsentita(ip)`, limite di richieste per IP in memoria del processo
+- `lib/generazione.ts` — come parliamo con Gemini: nomi dei modelli, budget di ragionamento della FASE E e `CONFIGURAZIONE_DETERMINISTICA` (vedi "Coerenza delle risposte" più sotto). Sta qui e non in `route.ts` perché le sonde devono misurare le impostazioni REALI usate in produzione, non una copia scritta nello script — stessa ragione di `lib/verifica.ts`, e quindi **niente alias `@/`** e nessun import, nemmeno di un tipo
 - `lib/verifica.ts` — `contieneRegolaCondizionaleComplessa()` e la lista `INDICATORI_REGOLA_CONDIZIONALE`: decidono se far scattare la FASE E. Stanno qui e non in `route.ts` per essere importabili da `scripts/prova-verifica.mjs` (quindi **niente alias `@/`** in questo file); vedi "Quando scatta la FASE E" per il criterio con cui si aggiunge o toglie una voce
 - `lib/discussioni.ts` — ricerca nelle discussioni di Board Games Stack Exchange. **NON è collegato a `route.ts`**: esiste solo per la sonda `prova-copertura` (vedi "Discussioni della community" più sotto per la decisione presa e il perché)
-- `app/components/` — `AllegatoFoto.tsx`, `BollaMessaggio.tsx`, `IntestazioneChat.tsx`: componenti presentazionali estratti da `page.tsx`
+- `app/components/` — `AllegatoFoto.tsx`, `BollaMessaggio.tsx`, `IntestazioneChat.tsx`, `SegnalaProblema.tsx`: componenti estratti da `page.tsx`
+- `app/api/segnalazione/route.ts` — endpoint delle segnalazioni degli utenti (`POST`): registra il caso nei log con il prefisso cercabile `[SEGNALAZIONE]` e, se il token è configurato, apre una issue su GitHub. Vedi "Segnalazioni degli utenti" più sotto
 - `app/tipi.ts` — tipi condivisi fra pagina e componenti
 - `data/comprehensive-rules.txt` — testo grezzo ufficiale scaricato da media.wizards.com
 - `data/tournament-rules.pdf` — PDF ufficiale del Magic Tournament Rules scaricato da media.wizards.com
@@ -57,6 +61,7 @@ Non esiste una suite di test automatici end-to-end. Il metodo di verifica standa
 - `data/errata-locali.json` — lista di correzioni manuali scritte a mano (non generata da uno script); anche questa va committata e dichiarata in `next.config.ts`, stessa regola degli altri due file dati
 - `scripts/prepara-regole.mjs` — script Node (ESM) che rigenera `regole-compatte.json` da `comprehensive-rules.txt`
 - `scripts/prepara-regole-torneo.mjs` — script Node (ESM) che rigenera `mtr-compatte.json` da `tournament-rules.pdf` (usa `pdf-parse`, dipendenza di sviluppo: non finisce nel bundle di produzione)
+- `scripts/sonda-coerenza.mjs` — sonda della coerenza (vedi "Comandi principali"). Importa `lib/generazione.ts` per usare le impostazioni vere, non una copia
 - `scripts/prova-ricerca.mjs` e `scripts/prova-copertura.mjs` — banco di prova della ricerca e sonda delle discussioni (vedi "Comandi principali"). Importano i moduli reali di `lib/` sfruttando lo type stripping nativo di Node, quindi misurano il codice che va in produzione e non una copia della sua logica. Per questo i moduli che devono restare importabili da qui **non usano l'alias `@/`**, che Node non risolve
 - `scripts/genera-icone-pwa.mjs` — genera le icone e gli screenshot PWA in `public/` (usa `sharp`, va lanciato solo se le icone cambiano)
 
@@ -181,6 +186,8 @@ e per un eventuale cambio di piattaforma, ma non contarci come difesa reale.
 Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge-mtg — causava file salvati a 0 byte (placeholder cloud non sincronizzati, attributo ReparsePoint) e conflitti di lockfile. Il progetto è stato spostato in C:\ProgettiDev\virtual-judge-mtg, FUORI da OneDrive. Non ricreare mai il progetto dentro cartelle sincronizzate da OneDrive/Dropbox/Google Drive.
 
 ## Cosa è già stato implementato
+- **Generazione deterministica** in tutte e tre le fasi (`CONFIGURAZIONE_DETERMINISTICA` in `lib/generazione.ts`): senza, Gemini sorteggiava la risposta a ogni invio. Vedi "Coerenza delle risposte" per cosa promette, cosa no, e i due numeri ancora da prendere
+- **Segnalazione dei problemi da parte degli utenti**, con la diagnostica del recupero allegata per rendere il caso riproducibile — vedi "Segnalazioni degli utenti"
 - Form domanda testuale + verdetto con citazioni reali da CR
 - Integrazione Scryfall per carte specifiche (Oracle Text + Rulings), con cascata fuzzy → autocomplete → ricerca testuale e verifica di somiglianza del nome per evitare falsi positivi
 - Controllo di ambiguità nel prompt, con limite di domande per turno e verdetti condizionali quando possibile
@@ -215,6 +222,111 @@ Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge
 - **Rilevatore di citazioni senza fonte** in `route.ts` (`numeriDiRegolaCitati` / `regoleCitateSenzaFonte`): se il verdetto cita un numero di regola che NON compare negli estratti forniti, il modello l'ha preso dalla propria memoria. Finisce in `console.error` e fa scattare la FASE E. Prima la FASE E guardava solo il testo delle regole RECUPERATE, quindi restava inerte proprio quando il recupero aveva fallito, cioè nel caso peggiore
 - Snellimento del codice a parità di comportamento, 7 commit su `simplify/judge-cleanup` (vedi la sezione dedicata più sotto per il metodo e per le semplificazioni valutate e scartate): codice morto e ripetizioni rimosse, costanti del recupero raccolte in cima a `rules.ts`, e le due funzioni lunghe (`cercaBlocchiPertinenti`, `POST`) spezzate nei loro passi. Verificato con confronto **byte per byte** dell'output del recupero su 23 casi: impronta SHA256 identica dal primo all'ultimo commit
 - Il prompt della FASE D distingue ora "estratti presenti" da "estratti pertinenti": deve dichiarare apertamente quando nessuna fonte affronta direttamente il caso, invece di trattare la presenza di estratti come garanzia che siano quelli giusti
+
+## Coerenza delle risposte: la generazione deterministica (agosto 2026)
+
+**Il difetto, in una frase: l'app tirava un dado a ogni risposta.** Non c'era alcun
+`generationConfig` nelle chiamate a Gemini, quindi FASI A, D ed E giravano con la temperatura di
+default del modello, che non è zero: la stessa domanda riceveva risposte diverse a ogni invio. Non
+era un difetto nascosto, era un'impostazione mai messa — ed era la prima causa di incoerenza,
+davanti alla variabilità del vocabolario della FASE A.
+
+`CONFIGURAZIONE_DETERMINISTICA` in `lib/generazione.ts` (`temperature: 0`, `topK: 1`, `topP: 1`) è
+applicata a **tutte e tre** le fasi. Sulla FASE E in particolare: è la fase che ha l'ultima parola
+sul verdetto e scatta su 10 casi di prova su 14, quindi lasciarla sorteggiare avrebbe vanificato il
+resto proprio sulle domande difficili.
+
+**Il `seed` è deliberatamente escluso**, e non per prudenza: serve a rendere ripetibile un
+sorteggio, e a temperatura 0 il sorteggio è già spento. È anche l'unico dei quattro campi che i tipi
+della libreria deprecata non espongono — verificato in `node_modules`: `GenerationConfig` dichiara
+`temperature`, `topP` e `topK`, non `seed` — quindi andrebbe passato con un cast come
+`thinkingConfig`, senza poter verificare in anticipo che l'API lo accetti. Un campo rifiutato
+farebbe fallire OGNI richiesta in produzione. Se la sonda mostrasse variabilità residua è la cosa
+successiva da provare, **in locale prima di pubblicare**.
+
+**Quello che questa impostazione non promette.** Google non garantisce risposte identiche bit per
+bit nemmeno a temperatura 0: resta un margine dovuto all'aritmetica dei calcoli e al modo in cui le
+richieste vengono raggruppate sui loro server. Forte convergenza, non garanzia matematica — ed è per
+questo che `npm run sonda-coerenza` esiste.
+
+**L'effetto collaterale da conoscere: a temperatura 0 anche gli ERRORI diventano stabili.** Se il
+modello sbaglia un caso lo sbaglierà sempre allo stesso modo, mentre prima poteva azzeccarlo per
+fortuna. È un vantaggio: un errore che si ripete si vede e si corregge (come per Urza's Saga), uno
+intermittente fa perdere giornate — questo progetto ne ha già perse inseguendone.
+
+**Cosa NON risolve, e va tenuto distinto.** Il dado era una delle tre cause, non l'unica:
+
+1. **La FASE A resta un amplificatore.** Parole chiave diverse → capitoli diversi → il verdetto
+   parte da fonti diverse. La temperatura 0 la rende ripetibile a parità di input, ma non rende due
+   input simili equivalenti. È il motivo per cui la sonda misura la FASE A separatamente.
+2. **La cronologia richiude il ciclo.** `app/page.tsx` rimanda la prosa integrale del giudice, che
+   torna dentro i prompt del turno dopo: la variabilità del turno 1 diventa input diverso per tutti
+   i turni successivi. La coerenza del primo turno vale più di quanto sembri.
+3. **Il fallback della FASE E dipende dalla quota.** Se `gemini-3.6-flash` ha esaurito le sue ~20
+   richieste giornaliere si restituisce il verdetto non verificato: la stessa domanda dà un verdetto
+   verificato oggi e non verificato domani. È voluto, ma è incoerenza.
+
+**Come si misura, e perché serve misurarlo.** `npm run sonda-coerenza` va lanciata due volte, con e
+senza `libero`. Lo scenario è una Stanza (Room) e **non** il benchmark Urza's Saga: quello ha una
+nota in `errata-locali.json` che serve la conclusione quasi pronta, quindi misurerebbe una coerenza
+più alta di quella reale — stessa trappola già registrata per le misure della FASE E. Il numero che
+conta è l'ultimo (varianti di conclusione): se è già 1 mentre le varianti di testo sono 5, lo
+strumento è coerente nella sostanza e cambia solo il modo di dirlo, e i lavori più grossi
+(memorizzazione della risposta, nucleo strutturato) non servono.
+
+**Non ancora misurata dal vivo**: la modifica è stata verificata con `tsc`, `eslint`, `npm run
+build` e `npm run prova-ricerca` (14/14, invariato), ma la sonda richiede una chiave API. I due
+numeri prima/dopo restano da prendere, e con essi anche `npm run sonda-fase-e` nelle due direzioni
+(verdetto giusto restituito identico, verdetto invertito corretto), perché la FASE E ha ricevuto la
+nuova configurazione accanto al proprio budget di ragionamento.
+
+## Segnalazioni degli utenti (`/api/segnalazione`)
+
+Sotto ogni risposta del giudice c'è un pulsante di segnalazione (`app/components/SegnalaProblema.tsx`).
+Serve a raccogliere **casi riproducibili**, non lamentele.
+
+**Il punto che rende la cosa utile: la diagnostica.** Una segnalazione che dicesse solo "ha
+sbagliato" sarebbe inutilizzabile, perché il difetto quasi sempre non sta nella scrittura del
+verdetto ma nel RECUPERO — e le parole chiave di quella esecuzione non sono ricostruibili a
+posteriori, visto che la FASE A ne produce di diverse ogni volta (vedi il limite registrato per il
+capitolo 113). Perciò `/api/judge` restituisce ora sempre un campo `diagnostica` compatto (parole
+chiave, regole citate, carte trovate, capitoli CR e MTR arrivati negli estratti, se la FASE E è
+scattata, citazioni senza fonte, se c'era una foto); il client se lo tiene e lo rimanda con la
+segnalazione. Il corpo della issue contiene già la riga pronta da incollare in
+`scripts/casi-di-prova.mjs`.
+
+Questo distingue le due diagnosi che il progetto ha già confuso una volta: **il capitolo decisivo
+non c'era** (difetto di recupero, si affronta in `lib/rules.ts`) contro **c'era e il modello l'ha
+applicato male** (difetto di ragionamento, si affronta nel prompt).
+
+**Dove finiscono.** Sempre nei log del server, su una riga sola col prefisso cercabile
+`[SEGNALAZIONE]`. In più, **se** le variabili d'ambiente sono configurate, viene aperta una issue
+su GitHub:
+
+- `GITHUB_TOKEN_SEGNALAZIONI` — token GitHub con permesso di scrittura sulle issue del repository
+- `GITHUB_REPO_SEGNALAZIONI` — facoltativa, forma `utente/repository`; senza, vale
+  `augustoceracchini-alt/virtual-judge-mtg`
+
+Senza token l'endpoint funziona lo stesso e risponde `{"salvata": true, "issue": null}`: GitHub è un
+di più, non una dipendenza. La chiamata a GitHub non lancia mai e ha un timeout di 8 secondi — una
+segnalazione già registrata nei log non deve diventare un errore per l'utente perché GitHub è lento.
+
+**Attenzione: il repository è pubblico, quindi le issue lo sono.** La domanda dell'utente e la
+risposta del giudice diventano visibili a chiunque, e il modulo lo dice apertamente prima dell'invio.
+La foto eventualmente allegata **non** viene mai inviata: pesa, e per riprodurre il caso basta sapere
+che c'era.
+
+**Difese.** L'endpoint condivide il contatore per IP di `/api/judge` (`lib/limite.ts`), quindi una
+segnalazione consuma una richiesta del limite: è la sola difesa contro chi volesse riempire le issue
+di spam. Il tipo di segnalazione è validato contro una lista chiusa (un tipo arbitrario finirebbe nel
+titolo di una issue pubblica), i testi sono troncati e non rifiutati (perdere il caso perché la
+conversazione era lunga sarebbe il peggiore dei due esiti), e la diagnostica viene ricostruita campo
+per campo invece di essere inoltrata così com'è: arriva dal client, quindi è inaffidabile quanto la
+cronologia.
+
+Verificato dal vivo con `npm run dev` e quattro richieste: segnalazione valida (`{"salvata":true,
+"issue":null}` e riga `[SEGNALAZIONE]` completa nei log), tipo non valido (400), segnalazione senza
+domanda né risposta (400), corpo non JSON (500).
 
 ## Prestazioni misurate in produzione
 
@@ -664,6 +776,7 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
    un'abilità sulla pila esiste indipendentemente dalla propria fonte (113.7a).
 
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
+- **Prendere i due numeri della coerenza** (`npm run sonda-coerenza` con e senza `libero`) e rimisurare la FASE E con `npm run sonda-fase-e` nelle due direzioni: la generazione deterministica è scritta e verificata staticamente, ma il suo effetto reale non è ancora misurato. Finché quei numeri non ci sono, non si sa se servano anche gli interventi più grossi discussi (memorizzazione della risposta su chiave di idempotenza, nucleo strutturato del verdetto) o se la conclusione fosse già stabile e a variare fosse solo la prosa
 - Ottimizzazione velocità — **il fronte è uno solo: la FASE E**. Due passi fatti: indicatori più selettivi (da 9 scatti su 13 a 8) e **budget di ragionamento**, che l'ha quasi dimezzata (vedi "Il tempo della FASE E è ragionamento" più sotto). L'idea che era scritta qui, «ridurre il testo che la FASE E riceve», **è stata misurata ed è sbagliata**: il tempo non sta nella lettura. Resta da provare **mostrare subito il verdetto della FASE D correggendolo dopo**, che azzererebbe l'attesa percepita senza toccare la correttezza finale — è ora l'unica leva grossa rimasta, ed è architetturale, non di prompt. Infrastruttura, file dati e cold start sono stati misurati ed esclusi. Il dizionario locale IT-EN in `lib/dizionario.ts` **è declassato**: varrebbe meno di un secondo su dieci
 - Decisione di prodotto da prendere: se il parse JSON della FASE A fallisce, oggi il giudice risponde senza fonti avvisando l'utente. L'alternativa è restituire un errore. Il log c'è già, la decisione no
 - ~~**Estendere la pesatura per rarità al punteggio dei blocchi.**~~ **FATTO** (19 agosto 2026, branch `pesatura-rarita`) — vedi "Pesatura per rarità estesa" più sotto per l'esito, il costo e i due errori commessi lungo la strada. Il testo che segue è la formulazione originale del problema, lasciata perché descrive bene il difetto:

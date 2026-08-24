@@ -91,6 +91,15 @@ function regoleCitateSenzaFonte(risposta: string, estratti: string): string[] {
   return numeriDiRegolaCitati(risposta).filter((numero) => !estratti.includes(numero));
 }
 
+// I numeri di capitolo presenti negli estratti, letti dalle etichette "[Capitolo NNN - Titolo]"
+// che lib/rules.ts antepone a ogni blocco. Servono alla diagnostica restituita al client: quando un
+// utente segnala una risposta sbagliata, sapere QUALI capitoli erano arrivati al modello distingue
+// un difetto di recupero (il capitolo decisivo non c'era) da un difetto di ragionamento (c'era e il
+// modello l'ha applicato male) — due problemi che si affrontano in due file diversi.
+function capitoliNegliEstratti(estratti: string): string[] {
+  return [...new Set([...estratti.matchAll(/\[Capitolo (\S+)/g)].map((riscontro) => riscontro[1]))];
+}
+
 function eRichiestaDiChiarimenti(risposta: string): boolean {
   return risposta.includes("===OPZIONI_CHIARIMENTO===") || risposta.includes("Ho bisogno di alcuni chiarimenti");
 }
@@ -516,8 +525,24 @@ export async function POST(request: NextRequest) {
 
     cronometro.totale(necessitaVerifica ? "TOTALE (con FASE E)" : "TOTALE (senza FASE E)");
 
+    // La diagnostica viaggia SEMPRE, non solo con DEBUG_JUDGE=true: il client se la tiene da parte
+    // e la rimanda a /api/segnalazione se l'utente segnala che la risposta è sbagliata. Senza,
+    // una segnalazione direbbe soltanto "ha sbagliato", mentre il difetto quasi sempre sta nel
+    // RECUPERO — e le parole chiave di QUESTA esecuzione non sono ricostruibili a posteriori,
+    // perché la FASE A ne produce di diverse ogni volta. Sono poche centinaia di byte, e non
+    // contengono nulla che l'utente non abbia già scritto o ricevuto.
     return NextResponse.json({
       risposta: risposta,
+      diagnostica: {
+        paroleChiave: keywordCombinate,
+        regoleCitate: citedRules,
+        carte: datiCarte.map((carta) => carta.nome),
+        capitoliCR: capitoliNegliEstratti(estrattiRegole),
+        capitoliMTR: capitoliNegliEstratti(estrattiRegoleTorneo),
+        faseE: necessitaVerifica,
+        citazioniSenzaFonte: citazioniSenzaFonte,
+        conFoto: haImmagine,
+      },
       ...(DEBUG_ATTIVO ? { tempi: cronometro.elenco() } : {}),
     });
   } catch (errore) {
