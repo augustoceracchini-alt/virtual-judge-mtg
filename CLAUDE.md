@@ -410,9 +410,9 @@ del caso. Orienta il ragionamento, non lo tronca — ed è probabilmente per que
 regge.
 
 **Verificato in tutte e due le direzioni, perché una sola non basta**: con il budget attivo la FASE E
-continua a **correggere** un verdetto con la conclusione invertita, e a restituire **byte per byte
-identico** un verdetto già corretto. Un budget che accorcia i tempi ma non fa più scattare la
-correzione sarebbe un guadagno finto; uno che fa riscrivere un verdetto giusto sarebbe un danno.
+continua a **correggere** un verdetto con la conclusione invertita. La seconda direzione — restituire
+**byte per byte identico** un verdetto già corretto — era però verificata su **una sola esecuzione**,
+ed è stata poi smentita: vedi "La FASE E può peggiorare un verdetto corretto" più sotto.
 
 **Attenzione a quale domanda si usa per misurare: il benchmark Urza's Saga è il caso MENO
 rappresentativo.** La nota di `errata-locali.json` gli serve la conclusione quasi pronta, quindi il
@@ -443,6 +443,48 @@ scattata in entrambi i casi.
 presenti, verdetto corretto, 3,9 s). Probabilmente l'API omette il campo quando il ragionamento è
 nullo o minimo. Non compromette nulla, ma se `undefined` diventasse la norma il log perderebbe la
 sua funzione di sentinella e la cosa andrebbe indagata.
+
+## La FASE E può peggiorare un verdetto corretto (misurato il 24 agosto 2026)
+
+**Due esecuzioni consecutive della stessa identica invocazione hanno dato esiti opposti.**
+`npm run sonda-fase-e -- 256`, stesso prompt, stesso budget, generazione deterministica attiva:
+
+| esecuzione | ragionamento | esito |
+|---|---|---|
+| 1ª | 2.338 token | verdetto restituito **identico**, conclusione corretta |
+| 2ª | 1.833 token | verdetto **riscritto**, conclusione **invertita e sbagliata** ("viene sacrificata") |
+
+Nella seconda il revisore ha ricostruito la 714.4 al contrario, esattamente come faceva il giudice
+prima che nascesse la nota di `errata-locali.json`: «il capitolo finale diventa 0, i segnalini sono
+2 ≥ 0, quindi si sacrifica». La 714.4 richiede invece che la Saga ABBIA una o più abilità di
+capitolo. Da notare che nella terza esecuzione, quella con il verdetto invertito da correggere, il
+modello ha enunciato la stessa regola **correttamente** e ha corretto il verdetto: non è ignoranza
+della regola, è instabilità.
+
+**Tre conseguenze da tenere presenti.**
+
+1. **La temperatura 0 non rende deterministica la FASE E.** Su `gemini-3.6-flash` non cambia solo la
+   forma: cambia la conclusione. I token di ragionamento diversi (2.338 contro 1.833) dicono che il
+   modello ha percorso strade diverse, non che ha detto la stessa cosa con altre parole. La
+   generazione deterministica resta misurata come utile su FASI A e D (vedi "Coerenza delle
+   risposte"); su questa fase non ha dimostrato niente.
+2. **Una singola esecuzione di `sonda-fase-e` non dimostra nulla**, in nessuna delle due direzioni.
+   È la stessa lezione già registrata per i suoi TEMPI (7,6 s un giorno e 17,3 s il giorno dopo,
+   stessa configurazione) e vale ora anche per il suo ESITO. Ogni affermazione su questa fase va
+   ripetuta almeno tre volte prima di essere scritta qui.
+3. **Il doppio controllo non è solo una rete di sicurezza: è anche un rischio.** Scatta su 10 casi di
+   prova su 14 e ha l'ultima parola sul verdetto, quindi quando sbaglia annulla un lavoro corretto.
+
+**Non è noto se dipenda dalla generazione deterministica o fosse già così**: manca la misura di
+confronto, perché prima della modifica la sonda era stata eseguita una volta sola per direzione. Per
+prenderla c'è ora `npm run sonda-fase-e -- 256 libero`, che disattiva la generazione deterministica
+lasciando il resto identico. Serve ripeterla almeno tre volte per parte, e la quota di
+`gemini-3.6-flash` è di ~20 richieste al giorno: sono due giorni di misure, non un pomeriggio.
+
+**Idea da valutare, non ancora provata:** far restituire alla FASE E una DECISIONE
+(`CONFERMO` / `CORREGGO` più il testo nuovo) invece di sempre l'intero verdetto, e sul ramo
+`CONFERMO` restituire da codice il verdetto della FASE D. Oggi si chiede a un modello generativo di
+fare da fotocopiatrice, e la 2ª esecuzione mostra cosa succede quando decide di non esserlo.
 
 ### Quando scatta la FASE E: indicatori resi più selettivi
 

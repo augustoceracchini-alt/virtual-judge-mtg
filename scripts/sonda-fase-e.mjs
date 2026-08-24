@@ -3,6 +3,15 @@
 //   npm run sonda-fase-e                 verdetto corretto, nessun limite di ragionamento
 //   npm run sonda-fase-e -- 256          verdetto corretto, budget di ragionamento 256
 //   npm run sonda-fase-e -- 256 sbagliato   verdetto INVERTITO: la FASE E deve correggerlo
+//   npm run sonda-fase-e -- 256 libero      senza generazione deterministica (com'era prima)
+//
+// **La stessa invocazione, ripetuta, puo' dare esiti OPPOSTI.** Misurato il 24 agosto 2026: due
+// esecuzioni consecutive di `-- 256`, stesso identico input e temperatura 0, hanno dato la prima un
+// verdetto restituito identico e corretto, la seconda una RISCRITTURA con la conclusione invertita
+// e sbagliata (token di ragionamento 2338 contro 1833: strade diverse, non solo parole diverse).
+// Ne segue che una singola esecuzione di questa sonda non dimostra nulla, in nessuna delle due
+// direzioni, e che l'opzione `libero` serve a capire se quel comportamento dipenda dalla
+// generazione deterministica o fosse gia' li' prima.
 //
 // Le due direzioni vanno provate ENTRAMBE, perche' un budget che accorcia i tempi ma non fa piu'
 // scattare la correzione e' un guadagno finto, e uno che fa riscrivere un verdetto gia' giusto e'
@@ -41,7 +50,11 @@ const VERDETTO_SBAGLIATO = `Urza's Saga VIENE sacrificata. Ecco il ragionamento:
 1. **Effetto di Blood Moon:** poiché Urza's Saga è una terra non base, Blood Moon ne imposta il tipo a Mountain (regola 305.7) e le fa perdere tutte le abilità generate dal proprio testo di regole, incluse le abilità di capitolo.
 2. **Sacrificio immediato:** la regola 714.4 prevede che una Saga venga sacrificata quando NON ha più abilità di capitolo. Avendogliele Blood Moon rimosse tutte, la condizione è soddisfatta e la Saga viene sacrificata come azione basata sullo stato.`;
 
-const usaSbagliato = process.argv[3] === "sbagliato";
+// Opzioni dopo il budget, in qualunque ordine: "sbagliato" sottopone il verdetto invertito,
+// "libero" toglie la generazione deterministica per misurare com'era prima.
+const OPZIONI = process.argv.slice(3);
+const usaSbagliato = OPZIONI.includes("sbagliato");
+const LIBERO = OPZIONI.includes("libero");
 const verdettoDaVerificare = usaSbagliato ? VERDETTO_SBAGLIATO : VERDETTO;
 
 const estrattiRegole = cercaRegolePertinenti(PAROLE, []);
@@ -68,11 +81,14 @@ console.log("verdetto sottoposto:", usaSbagliato ? "SBAGLIATO (deve essere corre
 // senza rispondere alla domanda per cui si lancia la sonda.
 const budget = process.argv[2] !== undefined ? Number(process.argv[2]) : null;
 const generationConfig = {
-  ...CONFIGURAZIONE_DETERMINISTICA,
+  ...(LIBERO ? {} : CONFIGURAZIONE_DETERMINISTICA),
   ...(budget === null ? {} : { thinkingConfig: { thinkingBudget: budget } }),
 };
 console.log("budget di ragionamento richiesto:", budget === null ? "nessun limite" : budget);
-console.log("generazione deterministica:", JSON.stringify(CONFIGURAZIONE_DETERMINISTICA));
+console.log(
+  "generazione:",
+  LIBERO ? "LIBERA (come prima della modifica)" : `deterministica ${JSON.stringify(CONFIGURAZIONE_DETERMINISTICA)}`
+);
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: MODELLO_VERIFICA, generationConfig });

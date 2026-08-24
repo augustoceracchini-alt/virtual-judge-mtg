@@ -21,11 +21,16 @@ export const MODELLO_VERIFICA = "gemini-3.6-flash";
 // per 27,6 secondi. Ridurre il testo in ingresso — la strada che il progetto si era annotato —
 // avrebbe quindi tagliato solo il prefill, cioè una frazione minima.
 //
-// Con questo valore la stessa verifica scende a 7,6-13,0 secondi, e continua a fare **entrambe** le
-// cose per cui la FASE E esiste: corregge un verdetto con la conclusione invertita, e restituisce
-// invece byte per byte identico un verdetto già corretto (verificato in tutti e due i sensi sullo
-// scenario benchmark Urza's Saga + Blood Moon, e senza passare al modello la nota di
-// errata-locali.json, quindi partendo dalle sole regole).
+// Con questo valore la stessa verifica scende a 7,6-13,0 secondi e continua a correggere un verdetto
+// con la conclusione invertita (verificato sullo scenario benchmark Urza's Saga + Blood Moon, senza
+// passare al modello la nota di errata-locali.json, quindi partendo dalle sole regole).
+//
+// **Qui era scritto che la FASE E restituisce "byte per byte identico" un verdetto già corretto: è
+// falso, e lo era su una misura sola.** Ripetendo due volte la stessa identica invocazione il 24
+// agosto 2026, la prima ha restituito il verdetto immutato e la seconda l'ha RISCRITTO con la
+// conclusione invertita e sbagliata. Vedi "La FASE E può peggiorare un verdetto corretto" in
+// CLAUDE.md: non è un difetto di questo budget, ma va tenuto presente ogni volta che si giudica la
+// FASE E da una singola esecuzione.
 //
 // Non è un tetto rigido: il modello ne usa quanti gliene servono (misurati 913 token su un caso e
 // 2.164 su un altro, a parità di richiesta), quindi il valore ORIENTA il ragionamento, non lo
