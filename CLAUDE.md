@@ -312,6 +312,24 @@ Servono anche ad accorgersi se il budget smettesse di fare effetto in silenzio �
 `@google/generative-ai` è deprecata e non conosce `thinkingConfig` nei suoi tipi, tanto che in
 `route.ts` il campo passa per un cast esplicito.
 
+**Banco di prova manuale rifatto col budget attivo (24 agosto 2026): 3 turni su 3 corretti, nessuna
+regressione.** Tempi 8,6 / 14,2 / 10,8 s, contro 10,9 / 14,7 / 9,4 s prima della modifica: sullo
+scenario benchmark **il guadagno non si vede**, ed è esattamente quanto previsto sopra — la sua
+errata tiene il ragionamento già basso (305-771 token nei tre turni). Il guadagno sta sulle domande
+senza errata, dove il ragionamento parte alto. Il turno 2 è anzi migliorato: conclude ora
+esplicitamente che il token è **1/1**, cifra che nell'esecuzione precedente restava implicita.
+
+**Quanto la durata sia inaffidabile, misurato sullo stesso identico test:** la sonda con verdetto
+invertito ha impiegato **7,6 s un giorno e 17,3 s il giorno dopo**, stessa configurazione e stesso
+prompt. Chi cronometra una volta sola e conclude qualcosa, conclude a caso. La correzione è comunque
+scattata in entrambi i casi.
+
+**Un'anomalia osservata e non spiegata:** in una delle tre chiamate `thoughtsTokenCount` è tornato
+**`undefined`** invece di un numero, con la FASE E per il resto normale (token letti e scritti
+presenti, verdetto corretto, 3,9 s). Probabilmente l'API omette il campo quando il ragionamento è
+nullo o minimo. Non compromette nulla, ma se `undefined` diventasse la norma il log perderebbe la
+sua funzione di sentinella e la cosa andrebbe indagata.
+
 ### Quando scatta la FASE E: indicatori resi più selettivi
 
 `INDICATORI_REGOLA_CONDIZIONALE` in `lib/verifica.ts` deve elencare **condizioni da ricalcolare, non
@@ -566,7 +584,7 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
   Oggi `pesoDiRarita` è usata SOLO per il voto del Glossario, dove è nuova e isolata. Il punteggio dei blocchi resta binario (+1 per parola chiave), quindi `Land` ed `Enchantment` — iniettate in automatico dalla riga del tipo Scryfall in `route.ts` — pesano quanto `deathtouch`. È la leva più profonda rimasta, ma tocca il cuore di una funzione tarata su molti casi misurati: va fatta misurando `npm run prova-ricerca` a ogni passo, mai a intuito.
 
   **Ora c'è un caso di prova che lo dimostra, e che oggi FALLISCE di proposito**: "Saga: parole chiave reali, coi tipi generici di Scryfall", fra i casi di `npm run prova-ricerca` (perciò il banco di prova sta a 12 su 13, non a 13 su 13 — non è una regressione, ed è il motivo per cui l'uscita resta a codice 0). Misurato il 19 agosto 2026 rieseguendo il banco di prova manuale a 3 turni: **nello scenario benchmark il capitolo 714 "Saga Cards" non viene recuperato affatto**, e il verdetto cita 714.4, 714.2d e 714.3b prendendole dalla memoria del modello (il rilevatore di citazioni senza fonte le registra in `console.error`, due esecuzioni su due). La risposta resta corretta **solo perché la nota di `errata-locali.json` su Urza's Saga enuncia già quelle regole per esteso**: su una Saga priva di errata non arriverebbe nulla. Le parole chiave reali del turno, copiate dal log, sono `["enchantment","land","lore counter","ability","type-changing effect","Enchantment","Land","Urza","Saga","Enchantment"]`: si noti che `Saga` c'è, e nonostante questo il capitolo non entra, perché quattro tipi generici pareggiano il voto di `lore counter`. Il caso gemello con parole scelte a mano (`chapter ability`, `sacrifice`, `state-based action`) passa: **la differenza fra i due è esattamente la misura del problema**, ed è la ragione per cui un banco di prova con vocabolario ideale non bastava a vederlo
-- Osservato e non risolto: in una prova a 3 turni il giudice ha dato la conclusione giusta sull'abilità del terzo capitolo di Urza's Saga appoggiandosi a «la pila si risolve in modo indipendente dai permanenti» invece di citare la 113.7a — che **era** fra gli estratti (verificato nei log). Non è una lacuna di recupero ma variabilità del modello nel citare la fonte che ha davanti; se ricapita, il posto in cui intervenire è il prompt della FASE D, non `lib/rules.ts`. Non si era ripetuto il 19 agosto 2026, ma **si è ripetuto il 24 agosto 2026**: al terzo turno il giudice ha di nuovo parafrasato («un'abilità che si trova sulla pila è un oggetto indipendente dalla fonte che l'ha generata») senza il numero, con la 113.7a presente negli estratti — verificato cercandola nei log. Due osservazioni su tre esecuzioni: non è più un sospetto isolato, ed è ora il candidato più concreto per un intervento sul prompt della FASE D
+- Osservato e non risolto: in una prova a 3 turni il giudice ha dato la conclusione giusta sull'abilità del terzo capitolo di Urza's Saga appoggiandosi a «la pila si risolve in modo indipendente dai permanenti» invece di citare la 113.7a — che **era** fra gli estratti (verificato nei log). Non è una lacuna di recupero ma variabilità del modello nel citare la fonte che ha davanti; se ricapita, il posto in cui intervenire è il prompt della FASE D, non `lib/rules.ts`. Non si era ripetuto il 19 agosto 2026, ma **si è ripetuto il 24 agosto 2026**: al terzo turno il giudice ha di nuovo parafrasato («un'abilità che si trova sulla pila è un oggetto indipendente dalla fonte che l'ha generata») senza il numero, con la 113.7a presente negli estratti — verificato cercandola nei log. **Tre osservazioni su quattro esecuzioni** (si è ripetuto anche col budget della FASE E attivo, il 24 agosto 2026: al terzo turno il giudice cita la 608.2h e poi parafrasa «un'abilità che è già un oggetto indipendente sulla pila», senza mai il numero 113.7a). Non è più un sospetto: è il difetto aperto più documentato del progetto, ed è il candidato più concreto per un intervento sul prompt della FASE D. Da notare che la 608.2h che il modello cita al suo posto contiene proprio il rimando «See rule 113.7a», quindi la regola giusta gli passa letteralmente sotto gli occhi
 - Semplificazioni valutate e **deliberatamente NON applicate** (vedi "Snellimento del codice" più sotto per il metodo, e non riproporle senza un'idea nuova): accorpare in `lib/scryfall.ts` le cinque ripetizioni dello schema "chiama → registra lo status → distingui 404 da guasto"; dare un nome al filtro `paroleChiave.filter((p) => p.length > 2)`; riscrivere come ciclo la cascata fuzzy → autocomplete → ricerca testuale; mettere in una costante condivisa la stringa `===OPZIONI_CHIARIMENTO===`, oggi ripetuta in `lib/prompts.ts`, `route.ts` e `app/page.tsx`
 - Le note di lavoro personali (fra cui `REVISIONE.md`) sono in `note-di-lavoro/`, cartella esclusa da git
 
