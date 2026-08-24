@@ -10,6 +10,12 @@ App web (PWA) che funge da arbitro virtuale per Magic: The Gathering. L'utente f
 
 Chi sviluppa (Augusto) non sa programmare. Ogni istruzione data va accompagnata da: percorso file esatto, codice completo senza omissioni, comandi terminale esatti. Preferisce procedere un modulo alla volta, testando ad ogni passo.
 
+**Come rispondere in chat: corto e semplice.** È una richiesta esplicita dell'utente, del 24 agosto
+2026. Poche righe, parole comuni, il punto per primo. Niente tabelle riassuntive, elenchi lunghi o
+ricostruzioni del ragionamento fatto: quelle vanno nei commit e in questo file, che è il posto dove
+la memoria del progetto deve stare. In chat basta cosa è stato fatto, cosa serve da lui, e un
+avviso solo se c'è davvero un rischio. Se una spiegazione lunga serve, chiedere prima se la vuole.
+
 ## Comandi principali
 
 - `npm run dev` — avvia il server di sviluppo (Turbopack) su `http://localhost:3000`
@@ -875,6 +881,7 @@ lavoro l'impronta è rimasta identica su 23 casi dal primo all'ultimo commit.
 
 ## Note di stile per chi genera codice su questo progetto
 - Tutti i commenti, nomi di variabili/funzioni e messaggi rivolti all'utente sono in ITALIANO
+- Le risposte in chat vanno tenute corte e semplici (vedi "Persona non tecnica"); la documentazione lunga va in questo file, non nei messaggi
 - Il codice inglese va bene solo per keyword/parole chiave tecniche interne (termini di ricerca inviati a Scryfall/regole)
 - Niente omissioni di codice ("// resto invariato") — sempre file completi quando si modifica qualcosa
 - Testare sempre con npm run dev + Invoke-RestMethod (PowerShell) prima di considerare una modifica conclusa
