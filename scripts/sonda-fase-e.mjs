@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { cercaRegolePertinenti } from "../lib/rules.ts";
 import { costruisciPromptVerifica } from "../lib/prompts.ts";
+import { MODELLO_VERIFICA, CONFIGURAZIONE_DETERMINISTICA } from "../lib/generazione.ts";
 
 for (const riga of readFileSync(".env.local", "utf8").split(/\r?\n/)) {
   const m = riga.match(/^([A-Z_]+)=(.*)$/);
@@ -58,13 +59,23 @@ const prompt = costruisciPromptVerifica(input);
 console.log("caratteri del prompt inviato:", prompt.length);
 console.log("verdetto sottoposto:", usaSbagliato ? "SBAGLIATO (deve essere corretto)" : "corretto (deve essere confermato)");
 
-// Primo argomento: budget di ragionamento da provare (vuoto = nessun limite, com'e' oggi).
+// Primo argomento: budget di ragionamento da provare (vuoto = nessun limite).
+//
+// Alla configurazione si aggiunge SEMPRE CONFIGURAZIONE_DETERMINISTICA, presa da lib/generazione.ts:
+// la sonda deve misurare la FASE E com'e' davvero in produzione, e in produzione la verifica gira a
+// temperatura 0. Prima questo script costruiva il proprio generationConfig con il solo budget, quindi
+// misurava una FASE E che non esiste piu': due richieste della quota stretta (~20 al giorno) spese
+// senza rispondere alla domanda per cui si lancia la sonda.
 const budget = process.argv[2] !== undefined ? Number(process.argv[2]) : null;
-const generationConfig = budget === null ? {} : { thinkingConfig: { thinkingBudget: budget } };
-console.log("budget di ragionamento richiesto:", budget === null ? "nessun limite (come oggi)" : budget);
+const generationConfig = {
+  ...CONFIGURAZIONE_DETERMINISTICA,
+  ...(budget === null ? {} : { thinkingConfig: { thinkingBudget: budget } }),
+};
+console.log("budget di ragionamento richiesto:", budget === null ? "nessun limite" : budget);
+console.log("generazione deterministica:", JSON.stringify(CONFIGURAZIONE_DETERMINISTICA));
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash", generationConfig });
+const model = genAI.getGenerativeModel({ model: MODELLO_VERIFICA, generationConfig });
 
 const t0 = Date.now();
 const r = await model.generateContent(prompt);
