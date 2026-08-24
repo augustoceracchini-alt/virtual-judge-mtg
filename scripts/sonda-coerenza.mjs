@@ -38,6 +38,35 @@ for (const riga of readFileSync(".env.local", "utf8").split(/\r?\n/)) {
   if (m) process.env[m[1]] = m[2];
 }
 
+// Il piano gratuito consente 15 richieste al MINUTO per modello, non solo un tetto giornaliero.
+// Misurato dal vivo: l'errore 429 riporta "GenerateRequestsPerMinutePerProjectPerModel-FreeTier,
+// limit: 15". Questa sonda fa 2 x N richieste una dietro l'altra, quindi senza pausa una passata da
+// 10 ripetizioni sfonda il tetto a meta' strada e fa perdere anche le misure gia' raccolte. A 4,5
+// secondi il ritmo resta intorno alle 13 al minuto, sotto il limite con un margine.
+const PAUSA_FRA_RICHIESTE_MS = 4500;
+
+function attendi(ms) {
+  return new Promise((risolvi) => setTimeout(risolvi, ms));
+}
+
+// Una richiesta, con la pausa prima e UNA riprova se il tetto scatta lo stesso — puo' succedere se
+// la stessa chiave e' usata altrove nello stesso minuto (l'app in locale, un'altra finestra).
+// Il messaggio di Google dice quanti secondi aspettare: si usa quello quando c'e'.
+async function generaConPausa(model, prompt, etichetta) {
+  await attendi(PAUSA_FRA_RICHIESTE_MS);
+  try {
+    return await model.generateContent(prompt);
+  } catch (errore) {
+    if (errore?.status !== 429) {
+      throw errore;
+    }
+    const secondi = Number(String(errore.message).match(/retry in (\d+)/i)?.[1] ?? 30) + 2;
+    console.log(`  (tetto di 15 richieste al minuto raggiunto durante ${etichetta}: aspetto ${secondi}s e riprovo)`);
+    await attendi(secondi * 1000);
+    return await model.generateContent(prompt);
+  }
+}
+
 const RIPETIZIONI = Number(process.argv[2] ?? 5);
 const LIBERO = process.argv[3] === "libero";
 
@@ -91,14 +120,16 @@ const model = genAI.getGenerativeModel(
 
 console.log(`Sonda di coerenza — ${RIPETIZIONI} ripetizioni, ${LIBERO ? "SENZA generazione deterministica (il PRIMA)" : "CON generazione deterministica (il DOPO)"}`);
 console.log(`Modello: ${MODELLO_STANDARD}`);
-console.log(`Domanda: ${DOMANDA}\n`);
+console.log(`Domanda: ${DOMANDA}`);
+console.log(`Richieste totali: ${RIPETIZIONI * 2}, con ${PAUSA_FRA_RICHIESTE_MS / 1000}s di pausa fra una e l'altra per restare sotto le 15 al minuto del piano gratuito.`);
+console.log(`Tempo previsto: circa ${Math.ceil((RIPETIZIONI * 2 * (PAUSA_FRA_RICHIESTE_MS + 2000)) / 60000)} minuti.\n`);
 
 // --- Misura 1: la FASE A produce sempre lo stesso vocabolario? ---
 console.log(`FASE A — estrazione delle parole chiave (${RIPETIZIONI} richieste)`);
 const promptEstrazione = costruisciPromptEstrazione(DOMANDA, "");
 const vocabolari = [];
 for (let i = 1; i <= RIPETIZIONI; i++) {
-  const risultato = await model.generateContent(promptEstrazione);
+  const risultato = await generaConPausa(model, promptEstrazione, "la FASE A");
   const testo = risultato.response.text().trim().replace(/```json/g, "").replace(/```/g, "").trim();
   let parole = [];
   try {
@@ -139,7 +170,7 @@ const testi = [];
 const regole = [];
 const conclusioni = [];
 for (let i = 1; i <= RIPETIZIONI; i++) {
-  const risultato = await model.generateContent(promptVerdetto);
+  const risultato = await generaConPausa(model, promptVerdetto, "la FASE D");
   const testo = risultato.response.text().trim();
   testi.push(testo);
   regole.push(numeriDiRegolaCitati(testo));
