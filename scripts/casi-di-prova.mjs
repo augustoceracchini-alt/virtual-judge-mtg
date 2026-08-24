@@ -140,6 +140,40 @@ export const CASI = [
     statoIniziale: "FALLISCE",
   },
   {
+    // Stessa domanda del caso qui sopra, ma con le parole chiave REALI prodotte dalla FASE A il
+    // 24 agosto 2026, e soprattutto con le REGOLE CITATE che quel turno portava con sé.
+    //
+    // Il caso precedente passa, questo no, e la differenza misura il problema. Due elementi lo
+    // distinguono: le parole sono più generiche ("the stack", "resolves", "control", "dependency"
+    // invece di "source"/"stack"), e le tre regole citate valgono +10 punti ciascuna ai blocchi che
+    // le nominano, spingendo in alto i capitoli 603, 611 e 613 e fuori il capitolo 113 "Abilities",
+    // che è quello dove vive la 113.7a.
+    //
+    // Verificato dal vivo: in quel turno il giudice ha dato la conclusione GIUSTA citando però la
+    // 608.2h al posto della 113.7a. Non era un difetto di citazione — misurato a parte, quando la
+    // 113.7a è fra gli estratti il modello la cita 5 volte su 5 — ma un difetto di RECUPERO: la
+    // regola non gli era mai arrivata. Da notare che la 608.2h, che il recupero porta, contiene il
+    // rimando esplicito "See rule 113.7a" scritto da Wizards.
+    nome: "Abilità sulla pila: parole reali e regole citate del turno",
+    fonte: "CR",
+    paroleChiave: [
+      "triggered ability",
+      "the stack",
+      "resolves",
+      "dependency",
+      "control",
+      "continuous effect",
+      "Enchantment",
+      "Land",
+      "Urza",
+      "Saga",
+    ],
+    regoleCitate: ["714.4", "305.7", "603.7"],
+    attesi: ["113.7a"],
+    nonVoluti: [],
+    statoIniziale: "FALLISCE",
+  },
+  {
     // Domanda reale di un utente: costo di mana di una Stanza (Room) sul campo con un solo lato
     // sbloccato (Roaring Furnace, senza Bottomless Pool). La regola decisiva è 709.5 (radice): finché
     // un permanente non ha la designazione "lato sbloccato" per un lato, non ha il nome, il costo di
