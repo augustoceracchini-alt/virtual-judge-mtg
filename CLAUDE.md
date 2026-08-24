@@ -508,12 +508,36 @@ dietro dai turni precedenti saturano da sole l'intera rete di sicurezza.
   vuote. Corretti entrambi, il 113 resta comunque **quinto** fra i candidati del Glossario. Costo:
   **+16%** di testo.
 
-**L'idea non ancora provata, e la più promettente: la co-occorrenza fra canali.** Il 113 è terzo per
-corpo e quinto per Glossario — mai nei primi due, ma **è l'unico capitolo che compare in entrambe le
-classifiche**. Due canali indipendenti che indicano lo stesso capitolo sono un segnale più forte di
-un buon piazzamento in uno solo, e premiarlo non allargherebbe la selezione (che è ciò che ha reso
-inaccettabili i due tentativi qui sopra): sposterebbe soltanto l'ordine. Da misurare, non da dare
-per buona.
+**La soluzione: la co-occorrenza fra canali (24 agosto 2026, `prova-ricerca` passa a 14/14).** Il
+113 era terzo per corpo e quinto per Glossario — mai nei primi due, ma **l'unico capitolo presente
+in entrambe le classifiche**. Due canali indipendenti che indicano lo stesso capitolo sono un
+segnale più forte di un buon piazzamento in uno solo, e premiarlo **sposta l'ordine invece di
+allargare la selezione**: è esattamente ciò che mancava ai due tentativi qui sopra, che facevano
+entrare più capitoli gonfiando gli estratti del 16%.
+
+Il canale corpo ordina ora così, nell'ordine: **prima chi ha anche un voto del Glossario**, poi chi
+ha **più blocchi di corpo pertinenti**, e solo da ultimo il punto massimo. Sono serviti tutti e tre i
+criteri, e ciascuno è stato aggiunto solo dopo aver misurato che il precedente non bastava:
+
+1. la sola co-occorrenza portava il 113 dal quinto al terzo posto, ma davanti gli restavano 702
+   (punto massimo 0,724) e **205 "Type Line" (0,514)**, che ha un voto di Glossario soltanto perché
+   `Land` ed `Enchantment` — i tipi generici che `route.ts` inietta da Scryfall — vi rimandano;
+2. il conteggio dei blocchi scioglie proprio quel pareggio, perché il 113 ne ha **8** contro i 5 del
+   205. Da notare che ordinare per conteggio *invece* del punto massimo era già stato provato in
+   passato e regrediva: qui funziona perché è un terzo criterio **dopo** la co-occorrenza, non al
+   posto del primo.
+
+Serve inoltre che il canale corpo **non sprechi posti**: sono esclusi i capitoli già ammessi per
+titolo e quelli portati dai numeri di regola citati (il capitolo 603 vinceva un posto con punto
+massimo 10,283, che è il bonus di 10 punti della citazione e non pertinenza vera, pur dovendo
+entrare comunque dal proprio canale). Ed è tolta la terra di nessuno descritta al punto 2 qui sopra,
+senza la quale il 113 non sarebbe nemmeno candidabile.
+
+**Il costo, misurato con i 14 casi ufficiali più 6 casi limite:** il testo degli estratti passa da
+170.905 a 174.584 caratteri (**+2,2%**, contro il +16% dei tentativi scartati), gli scatti della
+FASE E restano **10 su 14, identici**, e il tempo della ricerca non peggiora (260 ms prima, 230 ms
+dopo, dentro il rumore). È l'unico intervento provato su questo problema che risolva un caso senza
+farne pagare un altro.
 
 **Tentativi fatti e scartati** (per NON riprovarli senza un'idea nuova, non misurata):
 - **Seguire i rimandi "See rule NNN" che Wizards scrive dentro le regole** (24 agosto 2026), sul modello di quanto già si fa col Glossario: un blocco selezionato tira dentro anche la regola precisa a cui rimanda, un solo salto, ignorando i rimandi a un capitolo intero. Nelle CR ci sono 243 rimandi a una regola precisa. Scritto, misurato e **rimosso**: aggiungeva 9.170 caratteri agli estratti sui 14 casi di prova (+6%) senza far passare **nessun** caso in più. L'idea nasceva dal fatto che la 608.2h contiene proprio "See rule 113.7a", ma il caso che doveva risolvere non ha la 608.2h fra gli estratti, quindi il rimando non c'è da seguire.

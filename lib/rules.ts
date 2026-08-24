@@ -346,19 +346,18 @@ const MASSIMO_CAPITOLI_DA_GLOSSARIO = 2;
 // ogni parola generica portava un voto a un capitolo genericamente pertinente (107 "Numbers and
 // Symbols", 303 "Enchantments", 110 "Permanents", 205 "Type Line", 729 "Merging with Permanents"),
 // tutto pareggiava a un voto e il capitolo 709 finiva SETTIMO in classifica.
-function capitoliDaGlossario(
-  dati: DatiRegole,
-  paroleChiave: string[],
-  puntoMassimoPerCapitolo: Map<string, number>
-): string[] {
+// I voti che il Glossario esprime, senza ancora sceglierne i vincitori. Sta a parte da
+// `capitoliDaGlossario` perché serve due volte: qui per il proprio canale, e prima ancora al canale
+// corpo, che usa la presenza di un voto come segnale di co-occorrenza (vedi selezionaCapitoli).
+function votiDaGlossario(dati: DatiRegole, paroleChiave: string[]): Map<string, number> {
   const glossario = dati.glossario;
   // Il campo è opzionale nel tipo e mtr-compatte.json non ce l'ha: l'assenza è un caso previsto,
   // non un errore.
+  const voti = new Map<string, number>();
   if (!glossario) {
-    return [];
+    return voti;
   }
 
-  const voti = new Map<string, number>();
   for (const parola of paroleChiave) {
     const capitoliDiQuestaParola = new Set<string>();
     for (const voce of glossario) {
@@ -380,6 +379,14 @@ function capitoliDaGlossario(
     }
   }
 
+  return voti;
+}
+
+function capitoliDaGlossario(
+  dati: DatiRegole,
+  voti: Map<string, number>,
+  puntoMassimoPerCapitolo: Map<string, number>
+): string[] {
   return [...voti.entries()]
     // Stesso controllo già usato per le regole citate: il capitolo deve esistere in QUESTA fonte.
     .filter(([numeroCapitolo]) => dati.capitoli.some((c) => c.numero === numeroCapitolo))
@@ -601,9 +608,57 @@ function selezionaCapitoli(
     .slice(0, MASSIMO_CAPITOLI_PER_TITOLO)
     .map((c) => c.capitolo.numero);
 
+  // I voti del Glossario servono già qui, prima del proprio canale: vedi lo spareggio per
+  // co-occorrenza poco sotto.
+  const votiGlossario = votiDaGlossario(dati, paroleChiaveFiltrate);
+
+  // I capitoli portati dai numeri di regola citati entrano comunque, più in basso: si calcolano già
+  // qui perché non devono consumare i posti del canale corpo. Misurato con "603.7" fra le regole
+  // citate: il capitolo 603 vinceva un posto con un punto massimo di 10,283, che è il bonus di 10
+  // punti della citazione e non pertinenza vera, e quel posto era sprecato due volte — perché il
+  // canale delle regole citate glielo avrebbe dato lo stesso.
+  const capitoliDelleRegoleCitate = new Set(
+    regoleCitate
+      .map((regola) => regola.split(".")[0])
+      .filter((numeroCapitolo) => dati.capitoli.some((c) => c.numero === numeroCapitolo))
+  );
+
+  // Si candidano per corpo i capitoli che il canale del titolo NON ha preso, non quelli col titolo
+  // a punteggio zero. La differenza non è formale: col filtro precedente un capitolo dal titolo
+  // DEBOLMENTE pertinente stava peggio di uno il cui titolo non c'entrava nulla, perché il suo
+  // punteggio, pur minimo, bastava a escluderlo di qui senza bastare a farlo vincere di là. Cadeva
+  // in una terra di nessuno fra i due canali. Misurato sul capitolo 113 "Abilities", che ha 8
+  // blocchi di corpo pertinenti (ne bastano 3) ma un titolo da 0,102 perché aggancia solo la
+  // parola-testa "ability", la più comune del regolamento.
+  const ammessiPerTitolo = new Set(capitoliPerTitolo);
   const capitoliSoloCorpo = punteggiCapitoli
-    .filter((c) => c.punteggioTitolo === 0 && c.blocchiCorpo >= MINIMO_BLOCCHI_CORPO_PER_CANDIDATURA)
-    .sort((a, b) => b.puntoMassimo - a.puntoMassimo)
+    .filter(
+      (c) =>
+        !ammessiPerTitolo.has(c.capitolo.numero) &&
+        !capitoliDelleRegoleCitate.has(c.capitolo.numero) &&
+        c.blocchiCorpo >= MINIMO_BLOCCHI_CORPO_PER_CANDIDATURA
+    )
+    // **Co-occorrenza fra canali indipendenti.** A parità di tutto il resto passa avanti il
+    // capitolo che anche il Glossario indica: due canali che sbagliano insieme sono molto meno
+    // probabili di uno solo che sbaglia. È uno spareggio, non un allargamento — il numero di
+    // capitoli ammessi non cambia, cambia quale — e questo è esattamente ciò che mancava ai
+    // tentativi precedenti, che facevano entrare più capitoli gonfiando gli estratti del 16%.
+    //
+    // Misurato sul caso "Abilità sulla pila: parole reali e regole citate del turno": il capitolo
+    // 113 era terzo per punto massimo (0,405) dietro 702 (0,724) e 608 (0,702) su due soli posti,
+    // ma è l'UNICO fra i candidati che il Glossario indichi, tramite la voce "triggered ability"
+    // che Wizards fa rimandare proprio a 113 e 603.
+    .sort((a, b) => {
+      const glossarioA = votiGlossario.has(a.capitolo.numero) ? 1 : 0;
+      const glossarioB = votiGlossario.has(b.capitolo.numero) ? 1 : 0;
+      if (glossarioA !== glossarioB) {
+        return glossarioB - glossarioA;
+      }
+      if (b.blocchiCorpo !== a.blocchiCorpo) {
+        return b.blocchiCorpo - a.blocchiCorpo;
+      }
+      return b.puntoMassimo - a.puntoMassimo;
+    })
     .slice(0, MASSIMO_CAPITOLI_SOLO_CORPO)
     .map((c) => c.capitolo.numero);
 
@@ -614,7 +669,7 @@ function selezionaCapitoli(
   // condivide vocabolario con la domanda, che gli altri canali non vedono. I capitoli già ammessi
   // da un altro canale vengono esclusi qui per non finire due volte in `capitoliSelezionati`:
   // conserverebbero comunque il budget di blocchi del canale che li ha ammessi per primo.
-  const capitoliGlossario = capitoliDaGlossario(dati, paroleChiaveFiltrate, puntoMassimoPerCapitolo)
+  const capitoliGlossario = capitoliDaGlossario(dati, votiGlossario, puntoMassimoPerCapitolo)
     .filter((numero) => !capitoliPerTitoloOCorpo.includes(numero));
 
   const capitoliSelezionati = [...capitoliPerTitoloOCorpo, ...capitoliGlossario];
