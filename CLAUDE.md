@@ -539,6 +539,19 @@ FASE E restano **10 su 14, identici**, e il tempo della ricerca non peggiora (26
 dopo, dentro il rumore). È l'unico intervento provato su questo problema che risolva un caso senza
 farne pagare un altro.
 
+**Quanto NON risolve, verificato dal vivo subito dopo.** Rieseguito il terzo turno del banco di prova
+manuale, il giudice conclude correttamente ma **continua a non citare la 113.7a**, perché con le
+parole chiave prodotte dalla FASE A *in quella esecuzione* il capitolo 113 resta fuori. Le parole
+erano `["lore counter","triggered ability","stack","dependency","reading the cards","resolving"]`
+più otto parole dalle righe del tipo di quattro carte — diverse da quelle del caso di prova, che
+sono `["triggered ability","the stack","resolves","dependency","control","continuous effect"]`.
+
+**È il limite da tenere a mente su tutto questo filone: la FASE A produce un vocabolario diverso a
+ogni esecuzione, e ogni vocabolario è di fatto un caso di recupero a sé.** Un caso di prova ne fissa
+uno solo. Il miglioramento è reale e misurato, ma «il caso passa» non significa «il problema è
+risolto»: significa che quella variante è coperta. Per lo stesso motivo il numero di casi del banco
+di prova non va confuso con una percentuale di successo sul campo.
+
 **Tentativi fatti e scartati** (per NON riprovarli senza un'idea nuova, non misurata):
 - **Seguire i rimandi "See rule NNN" che Wizards scrive dentro le regole** (24 agosto 2026), sul modello di quanto già si fa col Glossario: un blocco selezionato tira dentro anche la regola precisa a cui rimanda, un solo salto, ignorando i rimandi a un capitolo intero. Nelle CR ci sono 243 rimandi a una regola precisa. Scritto, misurato e **rimosso**: aggiungeva 9.170 caratteri agli estratti sui 14 casi di prova (+6%) senza far passare **nessun** caso in più. L'idea nasceva dal fatto che la 608.2h contiene proprio "See rule 113.7a", ma il caso che doveva risolvere non ha la 608.2h fra gli estratti, quindi il rimando non c'è da seguire.
 - Spareggio fra capitoli a pari punteggio di titolo tramite conteggio dei blocchi nel corpo: regredisce
