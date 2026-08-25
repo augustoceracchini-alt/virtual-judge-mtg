@@ -4,7 +4,13 @@ import { useRef, useState } from "react";
 import AllegatoFoto from "@/app/components/AllegatoFoto";
 import BollaMessaggio from "@/app/components/BollaMessaggio";
 import IntestazioneChat from "@/app/components/IntestazioneChat";
-import type { DomandaChiarimento, ImmagineSelezionata, MessaggioCronologia } from "@/app/tipi";
+import SegnalaProblema from "@/app/components/SegnalaProblema";
+import type {
+  DiagnosticaRisposta,
+  DomandaChiarimento,
+  ImmagineSelezionata,
+  MessaggioCronologia,
+} from "@/app/tipi";
 
 // Illustrazione di "Balance" (Kev Walker) via Scryfall, usata come sfondo decorativo
 // dietro tutta la chat: stessa fonte di immagini già usata dall'app per i dati delle carte.
@@ -139,6 +145,15 @@ function messaggioPerErroreDiPiattaforma(codiceHttp: number): string {
   return `Il server ha risposto con un errore (codice ${codiceHttp}).`;
 }
 
+// La conversazione fin qui, appiattita in testo, da allegare a una segnalazione. Stessa forma usata
+// da route.ts per i prompt, così un caso segnalato si rilegge nello stesso modo in cui il giudice
+// l'aveva letto.
+function cronologiaInTesto(messaggi: MessaggioCronologia[]): string {
+  return messaggi
+    .map((messaggio) => `${messaggio.ruolo === "utente" ? "Utente" : "Giudice"}: ${messaggio.testo}`)
+    .join("\n\n");
+}
+
 export default function Home() {
   const [messaggioCorrente, setMessaggioCorrente] = useState("");
   const [cronologia, setCronologia] = useState<MessaggioCronologia[]>([]);
@@ -241,7 +256,7 @@ export default function Home() {
       // lancerebbe un'eccezione, che finirebbe nel `catch` di rete più in basso facendo dire
       // all'app che il server è irraggiungibile.
       const corpoRisposta = await response.text();
-      let dati: { risposta?: string; errore?: string } | null = null;
+      let dati: { risposta?: string; errore?: string; diagnostica?: DiagnosticaRisposta } | null = null;
       try {
         dati = JSON.parse(corpoRisposta);
       } catch {
@@ -264,7 +279,14 @@ export default function Home() {
         const { testo: testoRisposta, chiarimenti } = estraiTestoEChiarimenti(dati.risposta);
         setCronologia((prev) => [
           ...prev,
-          { ruolo: "giudice", testo: testoRisposta, chiarimenti: chiarimenti },
+          {
+            ruolo: "giudice",
+            testo: testoRisposta,
+            chiarimenti: chiarimenti,
+            // Conservata per la segnalazione, mai mostrata: senza di lei un caso segnalato non si
+            // riesce a riprodurre (vedi DiagnosticaRisposta in app/tipi.ts).
+            diagnostica: dati.diagnostica,
+          },
         ]);
         handleRimuoviFoto();
       }
@@ -309,7 +331,21 @@ export default function Home() {
         {cronologia.length > 0 && (
           <div className="flex flex-col gap-4">
             {cronologia.map((messaggio, indice) => (
-              <BollaMessaggio key={indice} messaggio={messaggio} onClickOpzione={handleClickOpzione} />
+              <div key={indice} className="flex flex-col gap-2">
+                <BollaMessaggio messaggio={messaggio} onClickOpzione={handleClickOpzione} />
+                {messaggio.ruolo === "giudice" && (
+                  <SegnalaProblema
+                    domanda={
+                      indice > 0 && cronologia[indice - 1].ruolo === "utente"
+                        ? cronologia[indice - 1].testo
+                        : ""
+                    }
+                    risposta={messaggio.testo}
+                    cronologia={cronologiaInTesto(cronologia.slice(0, indice))}
+                    diagnostica={messaggio.diagnostica}
+                  />
+                )}
+              </div>
             ))}
           </div>
         )}

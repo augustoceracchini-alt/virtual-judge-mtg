@@ -16,6 +16,12 @@ import {
 } from "@/lib/prompts";
 import { DEBUG_ATTIVO, logDebug } from "@/lib/debug";
 import { contieneRegolaCondizionaleComplessa } from "@/lib/verifica";
+import {
+  MODELLO_STANDARD,
+  MODELLO_VERIFICA,
+  BUDGET_RAGIONAMENTO_VERIFICA,
+  CONFIGURAZIONE_DETERMINISTICA,
+} from "@/lib/generazione";
 import { richiestaConsentita } from "@/lib/limite";
 import { normalizzaEstrazioneFaseA, type RisultatoEstrazioneFaseA } from "@/lib/estrazione";
 
@@ -31,35 +37,6 @@ type MessaggioCronologia = {
 // correttezza: senza controllo sulla forma, un elemento privo del campo di testo verrebbe
 // interpolato nel prompt come "undefined", inquinando le istruzioni al modello.
 const MASSIMO_CARATTERI_CRONOLOGIA = 16000;
-
-// Due modelli diversi per due scopi diversi. MODELLO_STANDARD (quota gratuita generosa) gira su
-// ogni domanda, nelle FASI A e D. MODELLO_VERIFICA ragiona meglio ma ha una quota gratuita molto
-// più stretta (~20 richieste/giorno): usarlo solo nella FASE E, che scatta già solo per le
-// domande con regole condizionali complesse, non per ogni domanda.
-const MODELLO_STANDARD = "gemini-3.5-flash-lite";
-const MODELLO_VERIFICA = "gemini-3.6-flash";
-
-// Quanto ragionamento interno concedere al revisore della FASE E, che è di gran lunga la fase più
-// lenta dell'app.
-//
-// **Misurato, e smentisce l'ipotesi che era scritta qui prima.** Il tempo della FASE E non se ne va
-// nel LEGGERE i regolamenti né nello SCRIVERE il verdetto: se ne va nel ragionamento interno. Su
-// una chiamata reale senza alcun limite: 5.135 token letti, 191 scritti e **5.303 di ragionamento**,
-// per 27,6 secondi. Ridurre il testo in ingresso — la strada che il progetto si era annotato —
-// avrebbe quindi tagliato solo il prefill, cioè una frazione minima.
-//
-// Con questo valore la stessa verifica scende a 7,6-13,0 secondi, e continua a fare **entrambe** le
-// cose per cui la FASE E esiste: corregge un verdetto con la conclusione invertita, e restituisce
-// invece byte per byte identico un verdetto già corretto (verificato in tutti e due i sensi sullo
-// scenario benchmark Urza's Saga + Blood Moon, e senza passare al modello la nota di
-// errata-locali.json, quindi partendo dalle sole regole).
-//
-// Non è un tetto rigido: il modello ne usa quanti gliene servono (misurati 913 token su un caso e
-// 2.164 su un altro, a parità di richiesta), quindi il valore ORIENTA il ragionamento, non lo
-// tronca. Abbassarlo ancora non è stato provato; alzarlo riporta i tempi su (a 1024: 15,0-20,9 s).
-// Prima di cambiarlo, rimisurare con scripts/sonda-fase-e.mjs — a occhio non si vede nulla, perché
-// la durata della FASE E varia molto anche a parità di domanda.
-const BUDGET_RAGIONAMENTO_VERIFICA = 256;
 
 function eMessaggioCronologiaValido(valore: unknown): valore is MessaggioCronologia {
   if (valore === null || typeof valore !== "object") {
@@ -113,6 +90,15 @@ function numeriDiRegolaCitati(testo: string): string[] {
 // fornito. Meglio non segnalare un caso dubbio che riempire i log di falsi allarmi.
 function regoleCitateSenzaFonte(risposta: string, estratti: string): string[] {
   return numeriDiRegolaCitati(risposta).filter((numero) => !estratti.includes(numero));
+}
+
+// I numeri di capitolo presenti negli estratti, letti dalle etichette "[Capitolo NNN - Titolo]"
+// che lib/rules.ts antepone a ogni blocco. Servono alla diagnostica restituita al client: quando un
+// utente segnala una risposta sbagliata, sapere QUALI capitoli erano arrivati al modello distingue
+// un difetto di recupero (il capitolo decisivo non c'era) da un difetto di ragionamento (c'era e il
+// modello l'ha applicato male) — due problemi che si affrontano in due file diversi.
+function capitoliNegliEstratti(estratti: string): string[] {
+  return [...new Set([...estratti.matchAll(/\[Capitolo (\S+)/g)].map((riscontro) => riscontro[1]))];
 }
 
 function eRichiestaDiChiarimenti(risposta: string): boolean {
@@ -195,6 +181,11 @@ async function eseguiVerificaFaseE(genAI: GoogleGenerativeAI, input: InputPrompt
     // campo è presente. Se un giorno si passa alla libreria nuova (@google/genai), il campo è
     // previsto dai suoi tipi e questo cast va tolto.
     const configurazioneVerifica = {
+      // Anche il revisore genera in modo deterministico, non solo le FASI A e D. Senza, la fase che
+      // ha l'ultima parola sul verdetto resterebbe l'unica a sorteggiare: proprio sulle domande
+      // difficili (la FASE E scatta su 10 casi di prova su 14) la risposta finale continuerebbe a
+      // cambiare a ogni invio, vanificando il resto.
+      ...CONFIGURAZIONE_DETERMINISTICA,
       thinkingConfig: { thinkingBudget: BUDGET_RAGIONAMENTO_VERIFICA },
     } as unknown as GenerationConfig;
 
@@ -365,7 +356,15 @@ export async function POST(request: NextRequest) {
     }
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: MODELLO_STANDARD });
+    // Le FASI A e D girano con la generazione deterministica (vedi CONFIGURAZIONE_DETERMINISTICA in
+    // lib/generazione.ts): senza, Gemini sorteggia la risposta a ogni invio e la stessa domanda
+    // riceve verdetti diversi. Vale per entrambe le fasi, ed e' la FASE A a contare di piu' di
+    // quanto sembri: parole chiave diverse portano a capitoli diversi, quindi a un verdetto che
+    // parte gia' da fonti diverse.
+    const model = genAI.getGenerativeModel({
+      model: MODELLO_STANDARD,
+      generationConfig: CONFIGURAZIONE_DETERMINISTICA,
+    });
 
     const testoCronologia = cronologia
       .map((messaggio) => `${messaggio.ruolo === "utente" ? "Utente" : "Giudice"}: ${messaggio.testo}`)
@@ -558,8 +557,24 @@ export async function POST(request: NextRequest) {
 
     cronometro.totale(necessitaVerifica ? "TOTALE (con FASE E)" : "TOTALE (senza FASE E)");
 
+    // La diagnostica viaggia SEMPRE, non solo con DEBUG_JUDGE=true: il client se la tiene da parte
+    // e la rimanda a /api/segnalazione se l'utente segnala che la risposta è sbagliata. Senza,
+    // una segnalazione direbbe soltanto "ha sbagliato", mentre il difetto quasi sempre sta nel
+    // RECUPERO — e le parole chiave di QUESTA esecuzione non sono ricostruibili a posteriori,
+    // perché la FASE A ne produce di diverse ogni volta. Sono poche centinaia di byte, e non
+    // contengono nulla che l'utente non abbia già scritto o ricevuto.
     return NextResponse.json({
       risposta: risposta,
+      diagnostica: {
+        paroleChiave: keywordCombinate,
+        regoleCitate: citedRules,
+        carte: datiCarte.map((carta) => carta.nome),
+        capitoliCR: capitoliNegliEstratti(estrattiRegole),
+        capitoliMTR: capitoliNegliEstratti(estrattiRegoleTorneo),
+        faseE: necessitaVerifica,
+        citazioniSenzaFonte: citazioniSenzaFonte,
+        conFoto: haImmagine,
+      },
       ...(DEBUG_ATTIVO ? { tempi: cronometro.elenco() } : {}),
     });
   } catch (errore) {
