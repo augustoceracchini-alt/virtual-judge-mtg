@@ -17,6 +17,7 @@ import {
 import { DEBUG_ATTIVO, logDebug } from "@/lib/debug";
 import { contieneRegolaCondizionaleComplessa } from "@/lib/verifica";
 import { richiestaConsentita } from "@/lib/limite";
+import { normalizzaEstrazioneFaseA, type RisultatoEstrazioneFaseA } from "@/lib/estrazione";
 
 type MessaggioCronologia = {
   ruolo: "utente" | "giudice";
@@ -234,16 +235,11 @@ async function eseguiVerificaFaseE(genAI: GoogleGenerativeAI, input: InputPrompt
   return input.risposta;
 }
 
-type RisultatoEstrazioneFaseA = {
-  keywords: string[];
-  citedRules: string[];
-  cardNames: string[];
-};
-
 // FASE A: estrae parole chiave, numeri di regola e nomi di carte citati in tutta la conversazione
-// finora. Se la risposta di Gemini non è JSON valido, restituisce liste vuote invece di propagare
-// l'errore: la richiesta prosegue senza fonti (il prompt della FASE D avvisa l'utente in quel caso)
-// invece di fallire del tutto.
+// finora. Se la risposta di Gemini non è utilizzabile — JSON non valido, oppure valido ma non nella
+// forma attesa — restituisce liste vuote invece di propagare l'errore: la richiesta prosegue senza
+// fonti (il prompt della FASE D avvisa l'utente in quel caso) invece di fallire del tutto.
+// Quello che torna ha sempre e comunque tre `string[]`: il perché è in lib/estrazione.ts.
 async function eseguiEstrazioneFaseA(
   model: GenerativeModel,
   domanda: string,
@@ -256,12 +252,20 @@ async function eseguiEstrazioneFaseA(
   testoEstrazione = testoEstrazione.replace(/```json/g, "").replace(/```/g, "").trim();
 
   try {
-    const datiEstratti = JSON.parse(testoEstrazione);
-    return {
-      keywords: Array.isArray(datiEstratti.keywords) ? datiEstratti.keywords : [],
-      citedRules: Array.isArray(datiEstratti.cited_rules) ? datiEstratti.cited_rules : [],
-      cardNames: Array.isArray(datiEstratti.card_names) ? datiEstratti.card_names : [],
-    };
+    // La normalizzazione sta immediatamente dopo il parse, e non più a valle, perché da qui in
+    // poi tutto il resto del route handler deve poter dare per scontato di avere `string[]`. Il
+    // perché `Array.isArray` da solo non bastasse è documentato in lib/estrazione.ts.
+    //
+    // Il `null` distingue "JSON valido ma non è l'oggetto atteso" (per esempio `"null"` o `"42"`,
+    // che `JSON.parse` accetta senza protestare) da un'estrazione riuscita e povera. Senza quella
+    // distinzione il primo caso finirebbe nei log come "risposta non interpretabile come JSON",
+    // che è una diagnosi sbagliata, oppure non ci finirebbe affatto.
+    const estrazioneNormalizzata = normalizzaEstrazioneFaseA(JSON.parse(testoEstrazione));
+    if (estrazioneNormalizzata === null) {
+      throw new Error("JSON valido, ma non è un oggetto con i campi attesi");
+    }
+
+    return estrazioneNormalizzata;
   } catch (erroreEstrazione) {
     // Senza questo log il fallimento è invisibile a chi gestisce il servizio, ed è tutt'altro che
     // innocuo: con parole chiave e carte vuote la ricerca locale non restituisce nulla, e il
@@ -269,7 +273,7 @@ async function eseguiEstrazioneFaseA(
     // basandosi sulla propria memoria — esattamente ciò che questo progetto esiste per impedire.
     // L'utente almeno viene avvisato da quel ramo del prompt; nei log invece non compariva niente.
     console.error(
-      "FASE A: risposta di Gemini non interpretabile come JSON. Si procede senza parole chiave né nomi di carta, quindi senza fonti.",
+      "FASE A: risposta di Gemini inutilizzabile (JSON non valido, oppure valido ma non nella forma attesa). Si procede senza parole chiave né nomi di carta, quindi senza fonti.",
       erroreEstrazione,
       "Testo ricevuto (primi 500 caratteri):",
       testoEstrazione.slice(0, 500)
@@ -486,18 +490,15 @@ export async function POST(request: NextRequest) {
     const tutteLeFonti = `${estrattiRegole}\n${estrattiRegoleTorneo}`;
 
     // Una richiesta di chiarimenti non è un verdetto: non ha senso cercarvi citazioni da verificare,
-    // né sottoporla al doppio controllo. Serve a entrambe le cose, quindi si calcola una volta sola
-    // (qui `risposta` è ancora quella della FASE D: la FASE E può riassegnarla, ma solo più sotto).
+    // né sottoporla al doppio controllo.
     const chiedeChiarimenti = eRichiestaDiChiarimenti(risposta);
 
-    const citazioniSenzaFonte = chiedeChiarimenti ? [] : regoleCitateSenzaFonte(risposta, tutteLeFonti);
-
-    if (citazioniSenzaFonte.length > 0) {
-      console.error(
-        "FASE D: il verdetto cita numeri di regola che NON compaiono negli estratti forniti, quindi presi dalla memoria del modello e non dalle fonti:",
-        citazioniSenzaFonte.join(", ")
-      );
-    }
+    // Questo primo calcolo guarda la risposta della FASE D e serve a UNA cosa sola: decidere se
+    // eseguire la verifica. Non è il valore che finisce nei log — quello viene ricalcolato sulla
+    // risposta definitiva, dopo l'eventuale FASE E.
+    const citazioniSenzaFonteFaseD = chiedeChiarimenti
+      ? []
+      : regoleCitateSenzaFonte(risposta, tutteLeFonti);
 
     // La verifica scatta anche quando il verdetto cita regole che non gli sono state fornite, non
     // solo sugli indicatori testuali. Gli indicatori guardano infatti il testo delle regole
@@ -506,7 +507,12 @@ export async function POST(request: NextRequest) {
     // rispondendo a memoria. Una citazione senza fonte è il segnale che quel caso si è verificato.
     const necessitaVerifica =
       !chiedeChiarimenti &&
-      (contieneRegolaCondizionaleComplessa(tutteLeFonti) || citazioniSenzaFonte.length > 0);
+      (contieneRegolaCondizionaleComplessa(tutteLeFonti) || citazioniSenzaFonteFaseD.length > 0);
+
+    // Serve più sotto per sapere se la FASE E ha davvero riscritto il verdetto: `eseguiVerificaFaseE`
+    // restituisce il testo immutato sia quando conferma la conclusione sia quando fallisce per quota
+    // esaurita, quindi "la verifica è stata eseguita" non significa "il verdetto è cambiato".
+    const rispostaFaseD = risposta;
 
     if (necessitaVerifica) {
       risposta = await eseguiVerificaFaseE(genAI, {
@@ -520,6 +526,32 @@ export async function POST(request: NextRequest) {
       });
 
       cronometro.tappa("FASE E (Gemini: verifica)");
+    }
+
+    // Il controllo sulle citazioni va rifatto sulla risposta DEFINITIVA. La FASE E riscrive il
+    // verdetto, e riscrivendolo può introdurre un numero di regola che negli estratti non c'è:
+    // calcolandolo una volta sola prima della verifica, proprio la citazione inventata dal revisore
+    // restava invisibile. Ed è il caso peggiore, perché la FASE E esiste per CORREGGERE il verdetto:
+    // se invece lo peggiora, deve almeno lasciarne traccia.
+    //
+    // `eRichiestaDiChiarimenti` viene rivalutato sul testo finale invece di riusare
+    // `chiedeChiarimenti`: costa una `includes` e tiene vera la regola "una richiesta di
+    // chiarimenti non ha citazioni da verificare" anche nel caso in cui la FASE E trasformasse il
+    // verdetto in una domanda all'utente.
+    const rispostaCambiataDallaVerifica = risposta !== rispostaFaseD;
+    const citazioniSenzaFonte = eRichiestaDiChiarimenti(risposta)
+      ? []
+      : regoleCitateSenzaFonte(risposta, tutteLeFonti);
+
+    // Un log solo, e sulla risposta definitiva. Loggare anche prima della FASE E avrebbe segnalato
+    // due volte la stessa anomalia tutte le volte che la verifica non cambia il verdetto — cioè
+    // spesso, visto che il testo torna immutato sia quando la FASE E conferma sia quando fallisce.
+    // L'etichetta dice quale fase ha prodotto il testo che cita.
+    if (citazioniSenzaFonte.length > 0) {
+      console.error(
+        `${rispostaCambiataDallaVerifica ? "FASE E" : "FASE D"}: il verdetto cita numeri di regola che NON compaiono negli estratti forniti, quindi presi dalla memoria del modello e non dalle fonti:`,
+        citazioniSenzaFonte.join(", ")
+      );
     }
 
     logDebug("[DEBUG] Risposta finale (dopo la verifica, prima dell'invio al frontend):", risposta);
