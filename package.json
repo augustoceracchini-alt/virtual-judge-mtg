@@ -10,6 +10,7 @@
     "prova-ricerca": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-ricerca.mjs",
     "prova-copertura": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-copertura.mjs",
     "prova-verifica": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-verifica.mjs",
+    "prova-estrazione": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-estrazione.mjs",
     "sonda-fase-e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/sonda-fase-e.mjs",
     "sonda-citazioni": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/sonda-citazioni.mjs"
   },
