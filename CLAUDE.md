@@ -521,11 +521,43 @@ quindi avrebbe risposto `CORREGGO` e fornito lo stesso il testo sbagliato. Il pr
 come la FASE E consegna la propria conclusione, è che la conclusione stessa cambia fra un'esecuzione
 e l'altra.
 
-**Il passo successivo è quindi una misura, non una modifica**: ripetere `npm run sonda-fase-e -- 256`
-tre volte e contare quante volte stravolge il verdetto corretto. Se capita una volta su due è un
-problema grave e urgente; se capita una volta su dieci è un rischio da tenere d'occhio. Finché quel
-numero non c'è, qualunque intervento su questa fase sarebbe deciso a intuito — che su questa fase, e
-in questo progetto, è già costato tre diagnosi sbagliate.
+### Il numero: circa una volta su due (misurato il 25 agosto 2026)
+
+Sei esecuzioni della stessa identica invocazione `npm run sonda-fase-e -- 256`, verdetto corretto
+sottoposto, generazione deterministica attiva:
+
+| esecuzione | ragionamento | scritti | esito |
+|---|---|---|---|
+| 1ª (24 ago) | 2.338 | 191 | verdetto restituito identico ✔ |
+| 2ª (24 ago) | 1.833 | 196 | **riscritto, conclusione invertita ✘** |
+| 3ª (25 ago) | 1.801 | 191 | identico ✔ |
+| 4ª (25 ago) | 1.099 | 191 | identico ✔ |
+| 5ª (25 ago) | **(non riportati)** | 321 | **riscritto, conclusione invertita ✘** |
+| 6ª (25 ago) | **(non riportati)** | 384 | **riscritto, conclusione invertita ✘** |
+
+**Tre su sei: una volta su due.** È il caso che era stato definito «grave e urgente» prima di
+misurarlo. La FASE E scatta su 10 casi di prova su 14 e ha l'ultima parola, quindi su quei casi il
+verdetto corretto della FASE D ha grosso modo una probabilità su due di essere demolito.
+
+**Una traccia da seguire, non ancora una spiegazione: le due esecuzioni sbagliate del 25 agosto sono
+esattamente quelle in cui `thoughtsTokenCount` è tornato `undefined`**, cioè quelle in cui il
+modello non ha ragionato affatto (e infatti la 5ª è durata 3,4 secondi contro i 19-27 delle altre).
+Sono anche le uniche due con molti più token scritti (321 e 384 contro 191), perché riscrivono invece
+di ricopiare. La correlazione **non è però perfetta**: la 2ª esecuzione aveva 1.833 token di
+ragionamento ed è comunque finita male. Il campo `undefined` era già stato annotato qui come anomalia
+inspiegata: ora si sa almeno che compare insieme all'errore.
+
+**Da provare per prima, perché la traccia lo suggerisce e costa poco: alzare
+`BUDGET_RAGIONAMENTO_VERIFICA`** (oggi 256, il valore scelto per la VELOCITÀ quando si credeva che la
+FASE E fosse solo lenta). Se le esecuzioni sbagliate sono quelle in cui il modello salta il
+ragionamento, un budget più alto potrebbe impedirglielo. Va misurato con le stesse sei esecuzioni,
+non con una: è la lezione già pagata due volte su questa fase.
+
+**Attenzione a quanto questo numero valga in produzione.** La sonda non passa la nota di
+`errata-locali.json` né i dati Scryfall, quindi il modello arriva alla 714.4 da solo. Nell'app vera,
+su Urza's Saga, quella nota ha priorità assoluta e con ogni probabilità impedisce proprio questo
+errore. Il rischio misurato riguarda quindi soprattutto **le domande senza errata**, che sono la
+maggioranza.
 
 ### Quando scatta la FASE E: indicatori resi più selettivi
 
