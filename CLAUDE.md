@@ -895,6 +895,28 @@ Da rifare a mano dopo modifiche che toccano prompt, fasi o recupero: trova bug c
 3. Se l'avversario avesse aspettato il terzo capitolo? → sì, il tutor si risolve comunque:
    un'abilità sulla pila esiste indipendentemente dalla propria fonte (113.7a).
 
+**Eseguito sul merge del ramo della segnalazione (26 agosto 2026): 3 turni su 3 corretti.** Tempi
+12,8 / 19,4 / 10,3 s, con la FASE E a 8,1 / 12,8 / 5,6 s — sempre circa due terzi del totale, come
+sempre. Citazioni senza fonte: solo `714.2d` al primo turno, nessuna negli altri due.
+
+**Al terzo turno il capitolo 113 è stato recuperato E la 113.7a è stata citata per numero.** È
+un'osservazione che va contro le due note più vecchie di questo file, dove il giudice ora
+parafrasava la regola, ora non l'aveva affatto fra gli estratti. Capitoli recuperati in quel turno:
+714, 305, 603, **113**, 602, 702, 508, 205. **Vale però il limite già registrato**: la FASE A
+produce un vocabolario diverso a ogni esecuzione, quindi questa è una variante andata bene, non la
+prova che il recupero del 113 sia diventato affidabile. Una esecuzione non chiude la questione.
+
+**Provato nella stessa sessione anche `/api/segnalazione`**, che arriva con questo merge: senza
+`GITHUB_TOKEN_SEGNALAZIONI` risponde `{salvata: true, issue: null}` e scrive la riga `[SEGNALAZIONE]`
+nei log con la diagnostica completa. Il fallback senza token funziona.
+
+**Tranello dello strumento di misura, non dell'app:** con `Invoke-RestMethod` di Windows PowerShell
+5.1 le lettere accentate della risposta escono sfasate («prioritÃ » invece di «priorità»). Non è un
+difetto: `/api/judge` risponde `content-type: application/json` senza `charset`, e PowerShell 5.1 in
+quel caso decodifica in Latin-1 invece che in UTF-8. Verificato con `curl`, che stampa «può»
+correttamente, e nel browser, dove la pagina è giusta. Da sapere per non inseguire un bug che non
+c'è — i browser decodificano il JSON come UTF-8 per specifica, a prescindere dall'header.
+
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
 - **Prendere i due numeri della coerenza** (`npm run sonda-coerenza` con e senza `libero`) e rimisurare la FASE E con `npm run sonda-fase-e` nelle due direzioni: la generazione deterministica è scritta e verificata staticamente, ma il suo effetto reale non è ancora misurato. Finché quei numeri non ci sono, non si sa se servano anche gli interventi più grossi discussi (memorizzazione della risposta su chiave di idempotenza, nucleo strutturato del verdetto) o se la conclusione fosse già stabile e a variare fosse solo la prosa
 - Ottimizzazione velocità — **il fronte è uno solo: la FASE E**. Due passi fatti: indicatori più selettivi (da 9 scatti su 13 a 8) e **budget di ragionamento**, che l'ha quasi dimezzata (vedi "Il tempo della FASE E è ragionamento" più sotto). L'idea che era scritta qui, «ridurre il testo che la FASE E riceve», **è stata misurata ed è sbagliata**: il tempo non sta nella lettura. Resta da provare **mostrare subito il verdetto della FASE D correggendolo dopo**, che azzererebbe l'attesa percepita senza toccare la correttezza finale — è ora l'unica leva grossa rimasta, ed è architetturale, non di prompt. Infrastruttura, file dati e cold start sono stati misurati ed esclusi. Il dizionario locale IT-EN in `lib/dizionario.ts` **è declassato**: varrebbe meno di un secondo su dieci
