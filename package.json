@@ -12,6 +12,7 @@
     "prova-verifica": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-verifica.mjs",
     "prova-estrazione": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/prova-estrazione.mjs",
     "sonda-fase-e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/sonda-fase-e.mjs",
+    "sonda-coerenza": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/sonda-coerenza.mjs",
     "sonda-citazioni": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/sonda-citazioni.mjs"
   },
   "dependencies": {

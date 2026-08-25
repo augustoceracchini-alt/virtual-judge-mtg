@@ -98,6 +98,37 @@ La nota ha priorità assoluta nel prompt, sopra anche le Comprehensive Rules: de
 direttamente la conclusione corretta, non solo segnalare il dubbio. Dopo averla aggiunta va anche
 rifatto `npm run build`, per lo stesso motivo dei due file dati sopra.
 
+## Segnalare una risposta sbagliata
+
+Sotto ogni risposta del giudice c'è un pulsante di segnalazione: si sceglie il tipo di problema
+(risposta sbagliata, incompleta, mancata, altro) e si può aggiungere un commento — la parte più
+utile è scrivere quale sarebbe stata la risposta giusta e perché.
+
+Serve a raccogliere **casi riproducibili**, non lamentele. Insieme alla segnalazione parte anche la
+diagnostica di quella esecuzione: parole chiave estratte nella fase A, carte trovate su Scryfall,
+capitoli di regolamento effettivamente arrivati al modello, se la fase E è scattata, eventuali
+numeri di regola citati senza che comparissero fra le fonti. Senza quei dati una segnalazione
+direbbe soltanto "ha sbagliato", mentre il difetto sta quasi sempre nel **recupero** delle regole —
+e le parole chiave di quella esecuzione non sono ricostruibili a posteriori, perché la fase A ne
+produce di diverse ogni volta. Con quei dati si distingue invece il capitolo decisivo che non è mai
+arrivato (si interviene su `lib/rules.ts`) dal capitolo che c'era e che il modello ha applicato male
+(si interviene sul prompt).
+
+**Dove finiscono.** Sempre nei log del server, su una riga sola con il prefisso cercabile
+`[SEGNALAZIONE]`. Se la variabile `GITHUB_TOKEN_SEGNALAZIONI` è configurata (vedi
+"Configurazione"), viene aperta anche una issue sul repository, già contenente la riga pronta da
+incollare fra i casi di prova della ricerca. Senza token l'endpoint funziona comunque e risponde
+`{"salvata": true, "issue": null}`: GitHub è un di più, non una dipendenza, e una segnalazione già
+registrata non diventa mai un errore per chi la invia solo perché GitHub è lento o irraggiungibile.
+
+**Cosa viene inviato.** La domanda, la risposta del giudice, la conversazione di quello scambio e la
+diagnostica. **Non** la foto eventualmente allegata: pesa, e per riprodurre il caso basta sapere che
+c'era. Il repository è pubblico, quindi le issue sono visibili a chiunque — il modulo lo dichiara
+apertamente prima dell'invio.
+
+L'endpoint condivide il limite per IP di `/api/judge`, quindi una segnalazione consuma una richiesta
+di quel limite: è la difesa contro chi volesse riempire le issue di spam.
+
 ## Configurazione
 
 Serve un file `.env.local` nella cartella del progetto:
@@ -112,8 +143,21 @@ Facoltativo, per vedere nel terminale i prompt inviati all'IA e gli estratti rec
 DEBUG_JUDGE=true
 ```
 
-Su Vercel la chiave va inserita fra le variabili d'ambiente del progetto: il file `.env.local` non
-viene pubblicato.
+Facoltative, per far diventare le segnalazioni degli utenti delle issue sul repository invece di
+sole righe nei log:
+
+```
+GITHUB_TOKEN_SEGNALAZIONI=token-github-con-permesso-sulle-issue
+GITHUB_REPO_SEGNALAZIONI=utente/repository
+```
+
+Il token si crea da GitHub → *Settings* → *Developer settings* → *Personal access tokens* →
+*Fine-grained tokens*, dando accesso al solo repository di questo progetto e il permesso
+*Issues: Read and write*. La seconda variabile serve solo per puntare a un repository diverso da
+quello predefinito (`augustoceracchini-alt/virtual-judge-mtg`).
+
+Su Vercel queste variabili vanno inserite fra le variabili d'ambiente del progetto: il file
+`.env.local` non viene pubblicato.
 
 ## Struttura
 
@@ -122,10 +166,13 @@ app/
   page.tsx              interfaccia a chat, foto del tavolo, pulsanti di chiarimento
   layout.tsx            font e metadati
   globals.css           palette, tipografia, sfondo
+  components/           bolle dei messaggi, allegato foto, intestazione, segnalazione
   api/judge/route.ts    orchestrazione delle cinque fasi
+  api/segnalazione/route.ts   raccolta delle segnalazioni degli utenti
 lib/
   rules.ts              ricerca nei due regolamenti
   scryfall.ts           interrogazione dell'API Scryfall
+  generazione.ts        modelli usati e impostazioni di generazione
 data/
   comprehensive-rules.txt     testo ufficiale di partenza
   tournament-rules.pdf        PDF ufficiale di partenza
@@ -157,6 +204,21 @@ mai aggiornato dopo che Wizards ha cambiato la regola generale corrispondente), 
 `data/errata-locali.json` permette di correggere il singolo caso senza intervenire sul modello —
 vedi "Correzioni manuali a rulings superati" sopra. Non generalizza a interazioni mai viste: copre
 solo i casi annotati a mano.
+
+**La stessa domanda non riceve la stessa risposta, parola per parola.** Le chiamate all'IA girano con
+la generazione deterministica (temperatura 0), ma misurando 10 ripetizioni della stessa domanda sono
+tornati 10 testi diversi, esattamente come senza. Google non promette risposte identiche bit per bit
+nemmeno a temperatura 0, e su questo modello non lo sono affatto.
+
+Quello che nella stessa misura è rimasto **stabile è la sostanza**: su 20 esecuzioni la conclusione
+non è mai stata sbagliata, e cambiava solo il modo di dirla. Resta però la variabilità a monte: da
+una domanda formulata in modo appena diverso la fase A estrae parole chiave diverse, e parole diverse
+portano a estratti di regolamento diversi. I numeri completi sono in `CLAUDE.md`.
+
+Effetto collaterale voluto: a temperatura 0 anche gli errori diventano stabili. Se il giudice sbaglia
+un caso lo sbaglia sempre allo stesso modo, invece di azzeccarlo per fortuna una volta su cinque — ed
+è anche il motivo per cui il pulsante di segnalazione ha senso: un errore che si ripete si riproduce,
+e un errore che si riproduce si corregge.
 
 Non esiste una suite di test automatici. La verifica si fa avviando `npm run dev` e interrogando
 l'endpoint, come descritto in `CLAUDE.md`.
