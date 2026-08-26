@@ -21,23 +21,40 @@ export const MODELLO_VERIFICA = "gemini-3.6-flash";
 // per 27,6 secondi. Ridurre il testo in ingresso — la strada che il progetto si era annotato —
 // avrebbe quindi tagliato solo il prefill, cioè una frazione minima.
 //
-// Con questo valore la stessa verifica scende a 7,6-13,0 secondi e continua a correggere un verdetto
-// con la conclusione invertita (verificato sullo scenario benchmark Urza's Saga + Blood Moon, senza
-// passare al modello la nota di errata-locali.json, quindi partendo dalle sole regole).
+// **Il valore è passato da 256 a 1024 il 25 agosto 2026, e il motivo NON è più la velocità.** Il 256
+// era stato scelto quando si credeva che l'unico problema della FASE E fosse la lentezza: con quel
+// valore la verifica scende a 7,6-13,0 secondi e continua a correggere un verdetto con la
+// conclusione invertita. Poi è stato misurato quanto costa in correttezza, ed è molto:
 //
-// **Qui era scritto che la FASE E restituisce "byte per byte identico" un verdetto già corretto: è
-// falso, e lo era su una misura sola.** Ripetendo due volte la stessa identica invocazione il 24
-// agosto 2026, la prima ha restituito il verdetto immutato e la seconda l'ha RISCRITTO con la
-// conclusione invertita e sbagliata. Vedi "La FASE E può peggiorare un verdetto corretto" in
-// CLAUDE.md: non è un difetto di questo budget, ma va tenuto presente ogni volta che si giudica la
-// FASE E da una singola esecuzione.
+// **Sei esecuzioni della stessa identica invocazione con budget 256, verdetto CORRETTO sottoposto:
+// tre lo hanno restituito immutato e tre lo hanno riscritto invertendone la conclusione.** Una volta
+// su due. Cade con questo anche la nota che diceva che la FASE E restituisce "byte per byte
+// identico" un verdetto già corretto: era vera su una misura sola. Vedi "La FASE E può peggiorare un
+// verdetto corretto" in CLAUDE.md per la tabella completa.
+//
+// **La traccia che ha suggerito 1024**: le esecuzioni sbagliate sono quelle in cui
+// `thoughtsTokenCount` torna `undefined`, cioè quelle in cui il modello non ha ragionato affatto
+// (una è durata 3,4 secondi contro i 19-27 delle altre). Se l'errore arriva quando il ragionamento
+// viene saltato, un budget più alto dovrebbe renderlo più difficile da saltare. La correlazione non
+// è però perfetta: una delle sbagliate aveva 1.833 token di ragionamento.
+//
+// **Misurato dopo la modifica: 6 esecuzioni su 6 corrette a 1024, contro 3 su 6 a 256.** Se la
+// probabilità di errore fosse rimasta al 50%, sei esecuzioni buone di fila avrebbero una probabilità
+// dell'1,6%: segnale forte, non prova definitiva. Sei esecuzioni restano poche, e questa fase ha già
+// smentito due volte conclusioni tratte da campioni piccoli — se ricomparissero verdetti corretti
+// stravolti, la prima cosa da rifare è questa misura, non una modifica.
+//
+// **Il costo, già misurato: l'app rallenta.** A 1024 la FASE E torna a 15,0-20,9 secondi contro i
+// 7,6-13,0 di prima, ed è la fase più lenta dell'app. È uno scambio deliberato fra velocità e
+// correttezza, a favore della seconda: un verdetto giusto che arriva in venti secondi vale più di
+// uno sbagliato che arriva in otto.
 //
 // Non è un tetto rigido: il modello ne usa quanti gliene servono (misurati 913 token su un caso e
 // 2.164 su un altro, a parità di richiesta), quindi il valore ORIENTA il ragionamento, non lo
-// tronca. Abbassarlo ancora non è stato provato; alzarlo riporta i tempi su (a 1024: 15,0-20,9 s).
-// Prima di cambiarlo, rimisurare con scripts/sonda-fase-e.mjs — a occhio non si vede nulla, perché
-// la durata della FASE E varia molto anche a parità di domanda.
-export const BUDGET_RAGIONAMENTO_VERIFICA = 256;
+// tronca. Prima di cambiarlo ancora, rimisurare con `npm run sonda-fase-e -- <budget>` ripetuto
+// ALMENO sei volte: su questa fase una singola esecuzione non dimostra niente, in nessuna delle due
+// direzioni, ed è una lezione già pagata tre volte.
+export const BUDGET_RAGIONAMENTO_VERIFICA = 1024;
 
 // --- Generazione deterministica ---
 //

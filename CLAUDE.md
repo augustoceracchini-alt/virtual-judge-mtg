@@ -552,11 +552,30 @@ di ricopiare. La correlazione **non è però perfetta**: la 2ª esecuzione aveva
 ragionamento ed è comunque finita male. Il campo `undefined` era già stato annotato qui come anomalia
 inspiegata: ora si sa almeno che compare insieme all'errore.
 
-**Da provare per prima, perché la traccia lo suggerisce e costa poco: alzare
-`BUDGET_RAGIONAMENTO_VERIFICA`** (oggi 256, il valore scelto per la VELOCITÀ quando si credeva che la
-FASE E fosse solo lenta). Se le esecuzioni sbagliate sono quelle in cui il modello salta il
-ragionamento, un budget più alto potrebbe impedirglielo. Va misurato con le stesse sei esecuzioni,
-non con una: è la lezione già pagata due volte su questa fase.
+**Applicato: `BUDGET_RAGIONAMENTO_VERIFICA` passa da 256 a 1024** (25 agosto 2026). Il 256 era il
+valore scelto per la VELOCITÀ, quando si credeva che l'unico problema della FASE E fosse la
+lentezza; se le esecuzioni sbagliate sono quelle in cui il modello salta il ragionamento, un budget
+più alto dovrebbe renderlo più difficile da saltare.
+
+**Il costo è noto e accettato: a 1024 la FASE E torna a 15,0-20,9 secondi** contro i 7,6-13,0 di
+prima, ed è la fase più lenta dell'app. È uno scambio deliberato fra velocità e correttezza: un
+verdetto giusto in venti secondi vale più di uno sbagliato in otto.
+
+**Il beneficio è stato misurato, e c'è: 6 esecuzioni su 6 corrette a budget 1024**, contro 3 su 6 a
+256. Stesse sei invocazioni identiche, stesso verdetto corretto sottoposto: a 256 tre volte veniva
+demolito, a 1024 mai.
+
+**Quanto vale il numero.** Se la probabilità di errore fosse rimasta al 50%, vedere sei esecuzioni
+buone di fila avrebbe una probabilità dell'1,6%: è un segnale forte, non una prova definitiva. Sei
+esecuzioni restano poche in assoluto, e questa fase ha già smentito due volte conclusioni tratte da
+campioni piccoli — quindi vale come «funziona», non come «risolto per sempre». Se in futuro
+ricomparissero verdetti corretti stravolti, la prima cosa da rifare è questa misura, non una
+modifica.
+
+**La traccia dei token di ragionamento ne esce rafforzata**: le tre esecuzioni sbagliate a 256 erano
+tutte fra quelle in cui il modello ragionava poco o per niente, e alzando il budget il problema
+sparisce. Resta un'ipotesi sul MECCANISMO, ma ora è un'ipotesi con una previsione andata a buon
+fine.
 
 **Attenzione a quanto questo numero valga in produzione.** La sonda non passa la nota di
 `errata-locali.json` né i dati Scryfall, quindi il modello arriva alla 714.4 da solo. Nell'app vera,
