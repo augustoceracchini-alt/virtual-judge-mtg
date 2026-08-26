@@ -552,11 +552,21 @@ di ricopiare. La correlazione **non è però perfetta**: la 2ª esecuzione aveva
 ragionamento ed è comunque finita male. Il campo `undefined` era già stato annotato qui come anomalia
 inspiegata: ora si sa almeno che compare insieme all'errore.
 
-**Da provare per prima, perché la traccia lo suggerisce e costa poco: alzare
-`BUDGET_RAGIONAMENTO_VERIFICA`** (oggi 256, il valore scelto per la VELOCITÀ quando si credeva che la
-FASE E fosse solo lenta). Se le esecuzioni sbagliate sono quelle in cui il modello salta il
-ragionamento, un budget più alto potrebbe impedirglielo. Va misurato con le stesse sei esecuzioni,
-non con una: è la lezione già pagata due volte su questa fase.
+**Applicato: `BUDGET_RAGIONAMENTO_VERIFICA` passa da 256 a 1024** (25 agosto 2026). Il 256 era il
+valore scelto per la VELOCITÀ, quando si credeva che l'unico problema della FASE E fosse la
+lentezza; se le esecuzioni sbagliate sono quelle in cui il modello salta il ragionamento, un budget
+più alto dovrebbe renderlo più difficile da saltare.
+
+**Il costo è noto e accettato: a 1024 la FASE E torna a 15,0-20,9 secondi** contro i 7,6-13,0 di
+prima, ed è la fase più lenta dell'app. È uno scambio deliberato fra velocità e correttezza: un
+verdetto giusto in venti secondi vale più di uno sbagliato in otto.
+
+**Il beneficio invece NON è ancora misurato**, ed è la cosa da fare: ripetere
+`npm run sonda-fase-e -- 1024` **almeno sei volte** e contare quante volte stravolge il verdetto
+corretto, per confrontarlo con il 3 su 6 di 256. Con la quota di ~20 richieste al giorno di
+`gemini-3.6-flash` è una giornata di misure. Finché quel numero non c'è, questa resta un'ipotesi
+applicata, non una correzione dimostrata — e se il numero non migliorasse, il budget va riportato a
+256, perché a quel punto si starebbe pagando lentezza per niente.
 
 **Attenzione a quanto questo numero valga in produzione.** La sonda non passa la nota di
 `errata-locali.json` né i dati Scryfall, quindi il modello arriva alla 714.4 da solo. Nell'app vera,
