@@ -195,15 +195,23 @@ Google Gemini (`gemini-3.5-flash-lite`) · API pubblica Scryfall · hosting Verc
 ## Limiti noti
 
 Il ragionamento su regole condizionali a più clausole (per esempio le azioni basate sullo stato con
-un confronto numerico) resta corretto in circa il 70-80% dei casi con il modello attualmente in uso,
-anche con il doppio controllo della fase E. È il limite del livello di modello scelto per rientrare
-nella quota gratuita: aggiungere altre istruzioni al prompt ha già mostrato rendimenti decrescenti.
+un confronto numerico) resta la parte più fragile del giudice. È il limite del livello di modello
+scelto per rientrare nella quota gratuita: aggiungere altre istruzioni al prompt ha già mostrato
+rendimenti decrescenti.
 
 Per i casi specifici in cui questo porta a un errore noto e documentato (un ruling di una carta
 mai aggiornato dopo che Wizards ha cambiato la regola generale corrispondente), il file
 `data/errata-locali.json` permette di correggere il singolo caso senza intervenire sul modello —
 vedi "Correzioni manuali a rulings superati" sopra. Non generalizza a interazioni mai viste: copre
 solo i casi annotati a mano.
+
+**Il doppio controllo della fase E non è solo una rete di sicurezza: è anche un rischio.** Ripetendo
+sei volte la stessa verifica su un verdetto già corretto, tre volte su sei l'ha riscritto invertendo
+la conclusione. È la fase che ha l'ultima parola, e scatta proprio sulle domande difficili: quando
+sbaglia, annulla un verdetto giusto. La misura è stata presa senza le correzioni manuali di
+`data/errata-locali.json`, che sui casi annotati con ogni probabilità impediscono proprio questo
+errore — il rischio riguarda quindi soprattutto le domande non annotate, cioè la maggioranza. I
+numeri completi sono in `CLAUDE.md`.
 
 **La stessa domanda non riceve la stessa risposta, parola per parola.** Le chiamate all'IA girano con
 la generazione deterministica (temperatura 0), ma misurando 10 ripetizioni della stessa domanda sono
