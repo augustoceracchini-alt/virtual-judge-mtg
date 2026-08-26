@@ -36,8 +36,13 @@ export const MODELLO_VERIFICA = "gemini-3.6-flash";
 // `thoughtsTokenCount` torna `undefined`, cioè quelle in cui il modello non ha ragionato affatto
 // (una è durata 3,4 secondi contro i 19-27 delle altre). Se l'errore arriva quando il ragionamento
 // viene saltato, un budget più alto dovrebbe renderlo più difficile da saltare. La correlazione non
-// è però perfetta — una delle sbagliate aveva 1.833 token di ragionamento — quindi questa è
-// un'ipotesi da misurare, non una correzione dimostrata.
+// è però perfetta: una delle sbagliate aveva 1.833 token di ragionamento.
+//
+// **Misurato dopo la modifica: 6 esecuzioni su 6 corrette a 1024, contro 3 su 6 a 256.** Se la
+// probabilità di errore fosse rimasta al 50%, sei esecuzioni buone di fila avrebbero una probabilità
+// dell'1,6%: segnale forte, non prova definitiva. Sei esecuzioni restano poche, e questa fase ha già
+// smentito due volte conclusioni tratte da campioni piccoli — se ricomparissero verdetti corretti
+// stravolti, la prima cosa da rifare è questa misura, non una modifica.
 //
 // **Il costo, già misurato: l'app rallenta.** A 1024 la FASE E torna a 15,0-20,9 secondi contro i
 // 7,6-13,0 di prima, ed è la fase più lenta dell'app. È uno scambio deliberato fra velocità e

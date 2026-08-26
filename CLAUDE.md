@@ -561,12 +561,21 @@ più alto dovrebbe renderlo più difficile da saltare.
 prima, ed è la fase più lenta dell'app. È uno scambio deliberato fra velocità e correttezza: un
 verdetto giusto in venti secondi vale più di uno sbagliato in otto.
 
-**Il beneficio invece NON è ancora misurato**, ed è la cosa da fare: ripetere
-`npm run sonda-fase-e -- 1024` **almeno sei volte** e contare quante volte stravolge il verdetto
-corretto, per confrontarlo con il 3 su 6 di 256. Con la quota di ~20 richieste al giorno di
-`gemini-3.6-flash` è una giornata di misure. Finché quel numero non c'è, questa resta un'ipotesi
-applicata, non una correzione dimostrata — e se il numero non migliorasse, il budget va riportato a
-256, perché a quel punto si starebbe pagando lentezza per niente.
+**Il beneficio è stato misurato, e c'è: 6 esecuzioni su 6 corrette a budget 1024**, contro 3 su 6 a
+256. Stesse sei invocazioni identiche, stesso verdetto corretto sottoposto: a 256 tre volte veniva
+demolito, a 1024 mai.
+
+**Quanto vale il numero.** Se la probabilità di errore fosse rimasta al 50%, vedere sei esecuzioni
+buone di fila avrebbe una probabilità dell'1,6%: è un segnale forte, non una prova definitiva. Sei
+esecuzioni restano poche in assoluto, e questa fase ha già smentito due volte conclusioni tratte da
+campioni piccoli — quindi vale come «funziona», non come «risolto per sempre». Se in futuro
+ricomparissero verdetti corretti stravolti, la prima cosa da rifare è questa misura, non una
+modifica.
+
+**La traccia dei token di ragionamento ne esce rafforzata**: le tre esecuzioni sbagliate a 256 erano
+tutte fra quelle in cui il modello ragionava poco o per niente, e alzando il budget il problema
+sparisce. Resta un'ipotesi sul MECCANISMO, ma ora è un'ipotesi con una previsione andata a buon
+fine.
 
 **Attenzione a quanto questo numero valga in produzione.** La sonda non passa la nota di
 `errata-locali.json` né i dati Scryfall, quindi il modello arriva alla 714.4 da solo. Nell'app vera,
