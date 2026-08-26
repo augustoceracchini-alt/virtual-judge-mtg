@@ -209,7 +209,14 @@ const PUNTI_REGOLA_CITATA = 100;
 // quando la domanda riguarda le meccaniche di gioco e non le procedure di torneo.
 export function cercaRegoleTorneo(paroleChiave: string[], regoleCitate: string[]): string {
   const dati = caricaDati("mtr-compatte.json");
-  const paroleChiaveFiltrate = paroleChiave.filter((p) => p.length > 2);
+  // La deduplica qui NON è cosmetica: è un cambio di comportamento voluto. Il punteggio dell'MTR
+  // assegna un punto per OGNI parola chiave che compare nel blocco, quindi una parola ripetuta
+  // valeva doppio o triplo. E le ripetizioni arrivano davvero, perché route.ts unisce le parole
+  // di Gemini a quelle della riga del tipo di Scryfall senza che nessuno dei due sappia
+  // dell'altro: due incantesimi in gioco producono "Enchantment" due volte. Quel conteggio
+  // gonfiato sposta l'ordine dei blocchi, e l'ordine decide chi sopravvive alla troncatura a
+  // LIMITE_CARATTERI — non è un dettaglio di ordinamento, è quali regole vede il modello.
+  const paroleChiaveFiltrate = preparaParoleChiave(paroleChiave);
 
   const blocchiValutati = dati.blocchi.map((blocco) => {
     const titolo = titoloSottosezione(blocco.testo);
