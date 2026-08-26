@@ -171,10 +171,11 @@ function bloccoCitaUnaDelleRegole(testoBlocco: string, regoleCitate: string[]): 
 const LIMITE_CARATTERI = 18000;
 
 function assemblaEstratti(blocchiOrdinati: BloccoRegola[]): string {
-  let testoFinale = "";
+  const estratti: string[] = [];
+  let caratteriUsati = 0;
   for (const blocco of blocchiOrdinati) {
     const prossimoBlocco = `[Capitolo ${blocco.numeroCapitolo} - ${blocco.titoloCapitolo}]\n${blocco.testo}\n\n`;
-    if ((testoFinale + prossimoBlocco).length > LIMITE_CARATTERI) {
+    if (caratteriUsati + prossimoBlocco.length > LIMITE_CARATTERI) {
       // `continue` e non `break`: il blocco che non ci sta viene saltato, ma quelli dopo di lui
       // continuano a riempire lo spazio rimasto. Con `break` bastava un blocco lungo per chiudere
       // l'assemblaggio e buttare via anche tutti i blocchi corti che sarebbero entrati dopo: i
@@ -183,9 +184,10 @@ function assemblaEstratti(blocchiOrdinati: BloccoRegola[]): string {
       // per pertinenza, quindi saltarne uno non fa mai scavalcare un blocco più pertinente.
       continue;
     }
-    testoFinale += prossimoBlocco;
+    estratti.push(prossimoBlocco);
+    caratteriUsati += prossimoBlocco.length;
   }
-  return testoFinale.trim();
+  return estratti.join("").trim();
 }
 
 // Quanto pesa, nell'ordinamento, il fatto che l'argomento della sottosezione corrisponda alla
@@ -718,9 +720,20 @@ function raccogliBlocchi(
   // Prende i migliori blocchi PER CIASCUN capitolo selezionato (invece di un unico taglio
   // "top N assoluti" su tutti i capitoli insieme), così un capitolo poco chiacchierone ma decisivo
   // non viene escluso solo perché un altro fra quelli scelti ne ha tanti di punteggio pari.
+  const punteggiPerCapitolo = new Map<string, BloccoConPunteggio[]>();
+  for (const punteggioBlocco of punteggiBlocchi) {
+    const { numeroCapitolo } = punteggioBlocco.blocco;
+    const punteggiDelCapitolo = punteggiPerCapitolo.get(numeroCapitolo);
+    if (punteggiDelCapitolo) {
+      punteggiDelCapitolo.push(punteggioBlocco);
+    } else {
+      punteggiPerCapitolo.set(numeroCapitolo, [punteggioBlocco]);
+    }
+  }
+
   const perCapitolo = capitoli.numeri.flatMap((numeroCapitolo) =>
     miglioriBlocchiTra(
-      punteggiBlocchi.filter(({ blocco }) => blocco.numeroCapitolo === numeroCapitolo),
+      punteggiPerCapitolo.get(numeroCapitolo) ?? [],
       quantiBlocchiPerCapitolo(numeroCapitolo, capitoli)
     )
   );
@@ -777,12 +790,16 @@ function senzaDoppioni(parole: string[]): string[] {
   });
 }
 
+function preparaParoleChiave(paroleChiave: string[]): string[] {
+  return senzaDoppioni(paroleChiave.filter((parola) => parola.length > 2));
+}
+
 // Cerca nel documento i blocchi di regolamento più pertinenti e li assembla in un unico testo,
 // entro il limite di caratteri. Tre passi, in quest'ordine: dai un punteggio a ogni blocco, scegli
 // i capitoli da guardare, raccogli i blocchi migliori. In coda, ogni blocco selezionato si porta
 // dietro la propria regola padre (vedi conBlocchiPadre).
 function cercaBlocchiPertinenti(dati: DatiRegole, paroleChiave: string[], regoleCitate: string[]): string {
-  const paroleChiaveFiltrate = senzaDoppioni(paroleChiave.filter((p) => p.length > 2));
+  const paroleChiaveFiltrate = preparaParoleChiave(paroleChiave);
 
   const punteggiBlocchi = punteggiaBlocchi(dati, paroleChiaveFiltrate, regoleCitate);
   const capitoli = selezionaCapitoli(dati, paroleChiaveFiltrate, regoleCitate, punteggiBlocchi);
