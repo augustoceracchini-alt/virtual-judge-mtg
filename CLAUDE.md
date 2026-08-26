@@ -930,8 +930,15 @@ che imitano quelli veri** (parole ripetute, maiuscole miste, tipi generici di Sc
 sui casi ufficiali. Altrimenti "impronta identica" certifica soltanto che non è cambiato nulla nelle
 condizioni da laboratorio.
 
-**Resta da fare**: una prova dal vivo su una domanda di torneo. La modifica è misurata sugli
-estratti, non sul verdetto.
+**Provata dal vivo il 26 agosto 2026**: l'utente ha verificato una domanda di torneo con
+`npm run dev` e ha riportato che funziona correttamente. Nessuna regressione osservata.
+
+**Quanto vale questa conferma, detto onestamente**: è **una** osservazione, senza che siano stati
+registrati la domanda esatta né le sezioni MTR recuperate. Basta a escludere che la modifica abbia
+rotto qualcosa di evidente, non a dimostrare che il recupero dell'MTR sia migliorato — la
+differenza misurata riguarda **quali** sezioni sopravvivono alla troncatura, e per vederla
+servirebbe una domanda che tocchi proprio quelle. Vale il limite già registrato altrove in questo
+file: una esecuzione non chiude una questione.
 
 ## Banco di prova manuale (scenario benchmark a 3 turni)
 
