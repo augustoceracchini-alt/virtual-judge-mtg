@@ -234,19 +234,22 @@ export const CASI = [
     statoIniziale: "PASSA",
   },
   {
-    // Unico caso con parole chiave DUPLICATE, ed è il motivo per cui esiste. Tutti gli altri hanno
-    // parole scritte a mano, quindi senza doppioni, mentre in produzione i doppioni arrivano
-    // sempre: route.ts costruisce keywordCombinate come [...keywords, ...paroleTipoLinea], e le
-    // parole della riga del tipo di Scryfall si sovrappongono a quelle di Gemini. Qui "deck"
-    // compare tre volte, come accadrebbe con tre carte che ne parlano.
+    // GUARDIA SINTETICA sulla deduplica delle parole chiave nell'MTR. Il nome dice "amplificati"
+    // perché questo schema di doppioni NON può accadere in produzione, e la distinzione è stata
+    // pagata con una diagnosi sbagliata: "deck" non è mai una parola della riga del tipo di
+    // Scryfall, e lib/estrazione.ts deduplica già le parole di Gemini fra loro, quindi "deck" tre
+    // volte è impossibile. I doppioni veri sono solo parole di TIPO ripetute su più carte
+    // ("Instant" due volte per due istantanei), misurate dal vivo.
     //
-    // Senza la deduplica di preparaParoleChiave questo caso FALLISCE: "deck" contato tre volte
-    // spinge in alto la lista delle carte legali in Modern (6.4), che si mangia lo spazio, e
-    // "2.1 Match Structure" viene troncata via. Misurato, non ipotizzato.
+    // Il caso resta perché è l'unico modo di far fallire il banco di prova se qualcuno toglie la
+    // deduplica: con i doppioni REALISTICI la deduplica cambia solo l'ORDINE dei blocchi, mai
+    // quali arrivano (misurato su 400 vocabolari: 22 differenze, tutte di solo ordine), e
+    // prova-ricerca controlla la presenza di un testo, non la sua posizione. Amplificare il
+    // doppione è quindi l'unico modo di rendere osservabile il meccanismo.
     //
-    // Serve come guardia: se un giorno qualcuno toglie la deduplica dall'MTR, questo caso lo dice.
-    // Un banco di prova con input più puliti della realtà non misura la realtà.
-    nome: "Sideboard fra le partite, con i doppioni dei tipi Scryfall",
+    // Cosa afferma davvero: che preparaParoleChiave sia applicata anche a cercaRegoleTorneo.
+    // Cosa NON afferma: che in produzione la deduplica cambi le regole viste dal modello.
+    nome: "Doppioni amplificati: guardia sintetica sulla deduplica MTR",
     fonte: "MTR",
     paroleChiave: ["sideboard", "game", "match", "deck", "deck", "deck", "Creature"],
     regoleCitate: [],

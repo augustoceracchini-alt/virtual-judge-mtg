@@ -911,12 +911,33 @@ quelle di Gemini senza che nessuno dei due lo sappia. Due incantesimi in gioco b
 "Enchantment" il doppio. Contare tre volte "deck" perché tre carte hanno "Deck" nella riga del tipo
 misura quante carte ci sono, non quanto la domanda parli di mazzi.
 
-**Misurato**, con `["sideboard","Sideboard","deck","deck","deck","game"]`: sparisce
-"6.7 Pioneer Format Deck Construction" (2019 caratteri) ed entrano "2.5 Conceding or Intentionally
-Drawing", "3.8 Game Markers" e "8.4 Unified Deck Construction Rules". Non è un riordino innocuo: è
-un'altra selezione di regole davanti al modello. Le CR non sono toccate — impronta SHA256 di tutti i
-casi CR identica (`c308c540f52dd8be`), cambia solo l'MTR
-(`09ce8fa94eb0c0cb` → `45b90900649d0d73`).
+**Quanto conta davvero, misurato dopo aver quasi sbagliato la diagnosi.** La prima misura usava
+`["sideboard","Sideboard","deck","deck","deck","game"]` e mostrava un cambio di SELEZIONE:
+spariva "6.7 Pioneer Format Deck Construction" ed entravano altre tre sottosezioni. Quel
+vocabolario però **non può esistere in produzione**: "deck" non è mai una parola della riga del
+tipo di Scryfall, e `lib/estrazione.ts` deduplica già le parole di Gemini fra loro, quindi "deck"
+tre volte è impossibile. I doppioni veri sono **solo parole di TIPO ripetute su più carte**.
+
+Rimisurato su **400 vocabolari realistici** (otto insiemi di parole da domanda di torneo per dieci
+parole di tipo, ripetute da 2 a 6 volte): la deduplica cambia gli estratti in **22 casi**, e sono
+**tutte differenze di solo ordine**. I casi in cui cambia *quali* regole arrivano al modello sono
+**zero**.
+
+Confermato dal vivo il 26 agosto 2026 contro la produzione, domanda di torneo che nomina Lightning
+Bolt, Counterspell e Duress: il vocabolario reale è
+`["sideboard","deck","match","game","cards","library","Instant","Instant","Sorcery"]` — con un
+doppione autentico, "Instant" due volte perché due carte sono istantanei — e gli estratti MTR con
+e senza deduplica sono **identici byte per byte**, 17938 caratteri entrambi.
+
+**Conclusione onesta: la modifica è giusta in linea di principio** (contare due volte "Instant"
+misura quante carte ci sono, non quanto la domanda parli di istantanei) **ma il suo effetto
+osservabile in produzione è il riordino dei blocchi, non una diversa selezione di regole.** Le CR
+non sono toccate affatto: impronta di tutti i casi CR identica (`c308c540f52dd8be`).
+
+**La lezione, di nuovo la stessa:** un vocabolario di prova inventato può essere non solo più
+pulito della realtà, ma anche **più sporco in un modo che la realtà non produce**. Prima di
+dichiarare l'effetto di una modifica al recupero, va controllato che l'input della misura sia
+generabile da `route.ts`.
 
 **La lezione vera sta però nel banco di prova, e vale oltre questo caso.** I 14 casi di
 `casi-di-prova.mjs` passano **14/14 identici sia prima sia dopo**: non vedono la differenza,
@@ -925,13 +946,13 @@ produzione ne ha sempre. Un banco di prova con input più puliti della realtà n
 Per accorgersene sono serviti tre casi con parole duplicate aggiunti a mano all'impronta SHA256; di
 quei tre, **uno solo** cambiava risultato.
 
-**Il buco è ora chiuso da una guardia permanente**, non solo da una regola scritta qui. In
-`scripts/casi-di-prova.mjs` c'è un quindicesimo caso, "Sideboard fra le partite, con i doppioni
-dei tipi Scryfall": è l'unico con parole chiave ripetute, e "deck" vi compare tre volte come
-accadrebbe con tre carte che ne parlano. Senza la deduplica **fallisce** — "deck" contato tre
-volte spinge in alto la lista delle carte legali in Modern (6.4), che si mangia lo spazio, e
-"2.1 Match Structure" viene troncata via. Verificato eseguendo il banco di prova contro il
-`lib/rules.ts` di master: 14/15 con la riga "1 REGRESSIONI".
+**La guardia che c'è, e quello che NON garantisce.** In `scripts/casi-di-prova.mjs` c'è un
+quindicesimo caso, "Doppioni amplificati: guardia sintetica sulla deduplica MTR", che fallisce se
+qualcuno toglie la deduplica dall'MTR (verificato eseguendo il banco contro il `lib/rules.ts` di
+master: 14/15 con la riga "1 REGRESSIONI"). Usa però di proposito un doppione **amplificato e non
+realistico** ("deck" tre volte), ed è dichiarato nel commento del caso: con i doppioni veri la
+deduplica cambia solo l'ordine, e `prova-ricerca` verifica la presenza di un testo, non la sua
+posizione. Afferma quindi che il meccanismo sia collegato, non che serva a qualcosa in produzione.
 
 Conseguenza sui numeri: `prova-ricerca` passa **15/15**, e `prova-verifica` riporta ora
 **10 scatti su 15 (67%)** invece di 10 su 14 — è cambiato il denominatore, non il comportamento
