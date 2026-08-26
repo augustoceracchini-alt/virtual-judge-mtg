@@ -925,6 +925,18 @@ produzione ne ha sempre. Un banco di prova con input più puliti della realtà n
 Per accorgersene sono serviti tre casi con parole duplicate aggiunti a mano all'impronta SHA256; di
 quei tre, **uno solo** cambiava risultato.
 
+**Il buco è ora chiuso da una guardia permanente**, non solo da una regola scritta qui. In
+`scripts/casi-di-prova.mjs` c'è un quindicesimo caso, "Sideboard fra le partite, con i doppioni
+dei tipi Scryfall": è l'unico con parole chiave ripetute, e "deck" vi compare tre volte come
+accadrebbe con tre carte che ne parlano. Senza la deduplica **fallisce** — "deck" contato tre
+volte spinge in alto la lista delle carte legali in Modern (6.4), che si mangia lo spazio, e
+"2.1 Match Structure" viene troncata via. Verificato eseguendo il banco di prova contro il
+`lib/rules.ts` di master: 14/15 con la riga "1 REGRESSIONI".
+
+Conseguenza sui numeri: `prova-ricerca` passa **15/15**, e `prova-verifica` riporta ora
+**10 scatti su 15 (67%)** invece di 10 su 14 — è cambiato il denominatore, non il comportamento
+della FASE E: gli stessi 10 casi la fanno scattare.
+
 Da qui una regola per i prossimi refactor di `lib/rules.ts`: **l'impronta va presa anche su input
 che imitano quelli veri** (parole ripetute, maiuscole miste, tipi generici di Scryfall), non solo
 sui casi ufficiali. Altrimenti "impronta identica" certifica soltanto che non è cambiato nulla nelle

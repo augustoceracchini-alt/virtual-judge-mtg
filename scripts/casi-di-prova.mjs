@@ -234,6 +234,27 @@ export const CASI = [
     statoIniziale: "PASSA",
   },
   {
+    // Unico caso con parole chiave DUPLICATE, ed è il motivo per cui esiste. Tutti gli altri hanno
+    // parole scritte a mano, quindi senza doppioni, mentre in produzione i doppioni arrivano
+    // sempre: route.ts costruisce keywordCombinate come [...keywords, ...paroleTipoLinea], e le
+    // parole della riga del tipo di Scryfall si sovrappongono a quelle di Gemini. Qui "deck"
+    // compare tre volte, come accadrebbe con tre carte che ne parlano.
+    //
+    // Senza la deduplica di preparaParoleChiave questo caso FALLISCE: "deck" contato tre volte
+    // spinge in alto la lista delle carte legali in Modern (6.4), che si mangia lo spazio, e
+    // "2.1 Match Structure" viene troncata via. Misurato, non ipotizzato.
+    //
+    // Serve come guardia: se un giorno qualcuno toglie la deduplica dall'MTR, questo caso lo dice.
+    // Un banco di prova con input più puliti della realtà non misura la realtà.
+    nome: "Sideboard fra le partite, con i doppioni dei tipi Scryfall",
+    fonte: "MTR",
+    paroleChiave: ["sideboard", "game", "match", "deck", "deck", "deck", "Creature"],
+    regoleCitate: [],
+    attesi: ["3.16 Sideboard", "2.1 Match Structure"],
+    nonVoluti: [],
+    statoIniziale: "PASSA",
+  },
+  {
     nome: "Sideboard in torneo",
     fonte: "MTR",
     paroleChiave: ["sideboard", "deck registration"],
