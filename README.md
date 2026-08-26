@@ -44,7 +44,8 @@ npm run build
 ```
 
 Build di produzione. Da eseguire prima di pubblicare, per intercettare gli errori che altrimenti
-comparirebbero solo online.
+comparirebbero solo online. La build non richiede accesso a Google Fonts: l'interfaccia usa font
+di sistema, quindi funziona anche in ambienti senza accesso a Internet.
 
 ```bash
 npm run lint
