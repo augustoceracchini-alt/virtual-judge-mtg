@@ -21,7 +21,10 @@ import {
   MODELLO_VERIFICA,
   BUDGET_RAGIONAMENTO_VERIFICA,
   CONFIGURAZIONE_DETERMINISTICA,
+  TIMEOUT_GEMINI_MS,
+  TIMEOUT_GEMINI_VERIFICA_MS,
 } from "@/lib/generazione";
+import { classificaErroreGemini, eseguiConRiprova, rispostaPerGuasto } from "@/lib/rete";
 import { richiestaConsentita } from "@/lib/limite";
 import { normalizzaEstrazioneFaseA, type RisultatoEstrazioneFaseA } from "@/lib/estrazione";
 
@@ -189,10 +192,24 @@ async function eseguiVerificaFaseE(genAI: GoogleGenerativeAI, input: InputPrompt
       thinkingConfig: { thinkingBudget: BUDGET_RAGIONAMENTO_VERIFICA },
     } as unknown as GenerationConfig;
 
-    const modelVerifica = genAI.getGenerativeModel({
-      model: MODELLO_VERIFICA,
-      generationConfig: configurazioneVerifica,
-    });
+    // Il tempo massimo della FASE E è molto più largo di quello delle altre fasi perché la FASE E
+    // è molto più lenta (vedi TIMEOUT_GEMINI_VERIFICA_MS in lib/generazione.ts).
+    const modelVerifica = genAI.getGenerativeModel(
+      {
+        model: MODELLO_VERIFICA,
+        generationConfig: configurazioneVerifica,
+      },
+      { timeout: TIMEOUT_GEMINI_VERIFICA_MS }
+    );
+
+    // Qui, a differenza delle FASI A e D, NON si riprova, ed è una scelta e non una dimenticanza.
+    // Due motivi. Il primo: questa fase ha già un suo modo di fallire bene — il catch qui sotto
+    // restituisce il verdetto della FASE D, che è comunque una risposta utile — mentre A e D
+    // fallendo fanno perdere la risposta del tutto. Il secondo: qui la risorsa scarsa è il TEMPO.
+    // La FASE E vale già 15-21 secondi, e un secondo tentativo rischierebbe di sfondare il tetto di
+    // durata della funzione, facendo perdere all'utente anche il verdetto già scritto — cioè
+    // esattamente il danno che si voleva evitare. Da notare che su quota esaurita riprovare non
+    // servirebbe comunque: MODELLO_VERIFICA ha ~20 richieste al giorno, non al minuto.
     const risultatoVerifica = await modelVerifica.generateContent(promptVerifica);
     const rispostaVerificata = risultatoVerifica.response.text().trim();
 
@@ -217,8 +234,13 @@ async function eseguiVerificaFaseE(genAI: GoogleGenerativeAI, input: InputPrompt
       return rispostaVerificata;
     }
   } catch (erroreVerifica) {
+    // Il tipo di guasto va nel log, non solo l'errore grezzo: "quota" e "timeout" portano allo
+    // stesso esito visibile (verdetto non verificato) ma vogliono due rimedi opposti — il primo
+    // dice che MODELLO_VERIFICA ha finito le sue ~20 richieste giornaliere, il secondo che una
+    // chiamata è rimasta appesa. Senza l'etichetta le due cose sono indistinguibili nei log, ed è
+    // la distinzione che serve per sapere se la FASE E sta lavorando o è di fatto spenta.
     console.error(
-      "Errore nella verifica FASE E (si procede con il verdetto non verificato):",
+      `Errore nella verifica FASE E, guasto di tipo "${classificaErroreGemini(erroreVerifica)}" (si procede con il verdetto non verificato):`,
       erroreVerifica
     );
   }
@@ -238,7 +260,10 @@ async function eseguiEstrazioneFaseA(
 ): Promise<RisultatoEstrazioneFaseA> {
   const promptEstrazione = costruisciPromptEstrazione(domanda, testoCronologia);
 
-  const risultatoEstrazione = await model.generateContent(promptEstrazione);
+  const risultatoEstrazione = await eseguiConRiprova(
+    () => model.generateContent(promptEstrazione),
+    "FASE A (estrazione)"
+  );
   let testoEstrazione = risultatoEstrazione.response.text().trim();
   testoEstrazione = testoEstrazione.replace(/```json/g, "").replace(/```/g, "").trim();
 
@@ -361,10 +386,13 @@ export async function POST(request: NextRequest) {
     // riceve verdetti diversi. Vale per entrambe le fasi, ed e' la FASE A a contare di piu' di
     // quanto sembri: parole chiave diverse portano a capitoli diversi, quindi a un verdetto che
     // parte gia' da fonti diverse.
-    const model = genAI.getGenerativeModel({
-      model: MODELLO_STANDARD,
-      generationConfig: CONFIGURAZIONE_DETERMINISTICA,
-    });
+    const model = genAI.getGenerativeModel(
+      {
+        model: MODELLO_STANDARD,
+        generationConfig: CONFIGURAZIONE_DETERMINISTICA,
+      },
+      { timeout: TIMEOUT_GEMINI_MS }
+    );
 
     const testoCronologia = cronologia
       .map((messaggio) => `${messaggio.ruolo === "utente" ? "Utente" : "Giudice"}: ${messaggio.testo}`)
@@ -461,17 +489,24 @@ export async function POST(request: NextRequest) {
 
     logDebug("[DEBUG] Prompt completo inviato a Gemini:", promptSistema);
 
-    const result = haImmagine
-      ? await model.generateContent([
-          promptSistema,
-          {
-            inlineData: {
-              mimeType: mimeTypeImmagine,
-              data: immagineBase64,
-            },
-          },
-        ])
-      : await model.generateContent(promptSistema);
+    // Come la FASE A, anche il verdetto si riprova una volta se Gemini ha un intoppo passeggero:
+    // è la chiamata che produce la risposta, quindi perderla significa perdere tutto il lavoro
+    // delle fasi precedenti (ricerca nei regolamenti compresa) per un 429 durato un secondo.
+    const result = await eseguiConRiprova(
+      () =>
+        haImmagine
+          ? model.generateContent([
+              promptSistema,
+              {
+                inlineData: {
+                  mimeType: mimeTypeImmagine,
+                  data: immagineBase64,
+                },
+              },
+            ])
+          : model.generateContent(promptSistema),
+      haImmagine ? "FASE D (verdetto, con immagine)" : "FASE D (verdetto)"
+    );
     let risposta = result.response.text();
 
     cronometro.tappa(haImmagine ? "FASE D (Gemini: verdetto, con immagine)" : "FASE D (Gemini: verdetto)");
@@ -578,10 +613,16 @@ export async function POST(request: NextRequest) {
       ...(DEBUG_ATTIVO ? { tempi: cronometro.elenco() } : {}),
     });
   } catch (errore) {
-    console.error("Errore nella chiamata a Gemini:", errore);
-    return NextResponse.json(
-      { errore: "Si è verificato un errore durante l'elaborazione della domanda." },
-      { status: 500 }
-    );
+    // Prima di questa riga qualunque guasto diventava un 500 con «Si è verificato un errore
+    // durante l'elaborazione della domanda»: lo stesso messaggio per una chiave API mancante e per
+    // il tetto di 15 richieste al minuto del piano gratuito, che sono il problema di chi gestisce
+    // il servizio l'uno e un'attesa di sessanta secondi l'altro. All'utente non veniva detto né
+    // che la sua domanda andava benissimo, né che riprovare sarebbe bastato.
+    const tipoGuasto = classificaErroreGemini(errore);
+    const { messaggio, codiceHttp } = rispostaPerGuasto(tipoGuasto);
+
+    console.error(`Errore nell'elaborazione della domanda, guasto di tipo "${tipoGuasto}":`, errore);
+
+    return NextResponse.json({ errore: messaggio }, { status: codiceHttp });
   }
 }

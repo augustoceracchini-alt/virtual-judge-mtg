@@ -93,3 +93,29 @@ export const CONFIGURAZIONE_DETERMINISTICA = {
   topK: 1,
   topP: 1,
 };
+
+// --- Quanto tempo concedere a una chiamata prima di rinunciare ---
+//
+// **Il difetto che questi due valori chiudono: fino a qui NESSUNA chiamata a Gemini aveva un
+// limite di tempo.** Se una richiesta restava appesa — connessione che non risponde, guasto dalla
+// parte di Google — l'app aspettava senza fine, e l'unica cosa che la fermava era la piattaforma,
+// che a quel punto interrompe la funzione buttando via TUTTO il lavoro già fatto. `RequestOptions`
+// della libreria prevede un campo `timeout` apposta (verificato nei suoi tipi), e sopra quella
+// scadenza la chiamata fallisce con un errore che lib/rete.ts riconosce come "timeout".
+//
+// **I valori non servono a rendere l'app più veloce, ma a impedirle di restare ferma per sempre**:
+// sono perciò molto larghi rispetto ai tempi misurati, per non troncare una chiamata sana che
+// stesse solo andando piano.
+//
+// FASE A misurata 0,6-0,9 s e FASE D 1,5-2,1 s: 25 secondi sono più di dieci volte tanto.
+export const TIMEOUT_GEMINI_MS = 25000;
+
+// La FASE E è un caso a parte e il suo valore è scelto per una ragione diversa. È la fase più
+// lenta dell'app (15,0-20,9 s misurati a budget 1024, e 27,6 s in una sonda isolata), quindi il
+// tetto dev'essere molto più alto — ma soprattutto deve scattare PRIMA di quello della
+// piattaforma. Il motivo è che la FASE E ha già un suo fallback: se fallisce, `eseguiVerificaFaseE`
+// restituisce il verdetto della FASE D non verificato, che è comunque una risposta utile. Se invece
+// a interromperla è la piattaforma, quel fallback non viene mai eseguito e l'utente perde anche il
+// verdetto già scritto. 45 secondi stanno sopra il peggior tempo mai misurato e sotto il tetto
+// della funzione (una richiesta da 54,3 s è andata a buon fine, quindi il limite è oltre il minuto).
+export const TIMEOUT_GEMINI_VERIFICA_MS = 45000;

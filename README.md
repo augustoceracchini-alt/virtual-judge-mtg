@@ -236,3 +236,18 @@ Limite di 20 richieste ogni 10 minuti per IP (`lib/limite.ts`), per evitare che 
 esaurisca la quota Gemini condivisa da chiunque abbia il link. Il contatore vive in memoria del
 processo: su Vercel free si azzera ai cold start e non è condiviso tra istanze parallele, quindi è
 una protezione parziale, non assoluta.
+
+## Quando qualcosa va storto
+
+Il piano gratuito di Gemini consente 15 richieste al minuto per modello, e ogni domanda ne consuma
+2 o 3: il messaggio «troppe richieste» non è un caso di scuola, è il modo più probabile in cui
+l'app fallisce davvero. `lib/rete.ts` distingue perciò i guasti passeggeri da quelli definitivi,
+riprova una volta sola i primi, e dice all'utente cosa è successo — «aspetta un minuto e rimanda la
+domanda» invece di un generico «si è verificato un errore», che è lo stesso messaggio che meritano
+una chiave API sbagliata e un problema del server.
+
+Ogni chiamata verso l'esterno (Gemini e Scryfall) ha un tempo massimo. Se scade, non si riprova: il
+tempo le era già stato dato, e rifare la stessa chiamata raddoppierebbe l'attesa di chi sta
+aspettando una risposta.
+
+`npm run prova-rete` verifica tutto questo su 60 casi, gratis e in un istante.

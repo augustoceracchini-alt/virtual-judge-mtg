@@ -47,6 +47,27 @@ const INTESTAZIONI = {
   Accept: "application/json",
 };
 
+// Quanto aspettare una risposta di Scryfall prima di rinunciare. Fino a qui non c'era alcun
+// limite: una chiamata rimasta appesa bloccava l'INTERA richiesta dell'utente, perché le carte
+// vengono cercate una dopo l'altra e la FASE C non parte finché la B non ha finito. Otto secondi
+// sono lo stesso valore già scelto per la chiamata a GitHub in app/api/segnalazione/route.ts, e
+// sono larghissimi rispetto ai tempi veri (478-1062 ms misurati per due carte, comprese tutte le
+// chiamate della catena).
+//
+// Rinunciare qui non fa fallire la domanda: l'errore viene raccolto dal try/catch di
+// `cercaDatiCartaSuScryfall`, che restituisce lo stato "errore" — quindi la carta non finisce in
+// cache (si riproverà al prossimo turno) e il giudice risponde con le regole ma senza i dati di
+// quella carta, che è molto meglio di un'attesa senza fine.
+const TIMEOUT_SCRYFALL_MS = 8000;
+
+// Le opzioni di ogni chiamata a Scryfall. È una FUNZIONE e non una costante di proposito:
+// `AbortSignal.timeout()` comincia a contare nel momento in cui viene creato, quindi un segnale
+// costruito una volta sola al caricamento del modulo scadrebbe otto secondi dopo l'avvio del
+// processo e da lì in poi farebbe fallire ogni chiamata all'istante.
+function opzioniFetch(): RequestInit {
+  return { headers: INTESTAZIONI, signal: AbortSignal.timeout(TIMEOUT_SCRYFALL_MS) };
+}
+
 function attendi(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -63,7 +84,7 @@ function verificaRispostaScryfall(risposta: Response, descrizione: string): void
 
 async function cercaCartaFuzzy(nomeCarta: string) {
   const urlRicerca = `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(nomeCarta)}`;
-  const rispostaCarta = await fetch(urlRicerca, { headers: INTESTAZIONI });
+  const rispostaCarta = await fetch(urlRicerca, opzioniFetch());
   logDebug(`[DEBUG Scryfall] Tentativo fuzzy per '${nomeCarta}': status =`, rispostaCarta.status);
 
   verificaRispostaScryfall(rispostaCarta, `la ricerca fuzzy di "${nomeCarta}"`);
@@ -76,7 +97,7 @@ async function cercaCartaFuzzy(nomeCarta: string) {
 
 async function cercaCartaAutocomplete(nomeCarta: string) {
   const urlAutocomplete = `https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(nomeCarta)}`;
-  const rispostaAutocomplete = await fetch(urlAutocomplete, { headers: INTESTAZIONI });
+  const rispostaAutocomplete = await fetch(urlAutocomplete, opzioniFetch());
   logDebug(`[DEBUG Scryfall] Tentativo autocomplete per '${nomeCarta}': status =`, rispostaAutocomplete.status);
 
   verificaRispostaScryfall(rispostaAutocomplete, `l'autocomplete di "${nomeCarta}"`);
@@ -94,7 +115,7 @@ async function cercaCartaAutocomplete(nomeCarta: string) {
 
   const primoSuggerimento = suggerimenti[0];
   const urlEsatta = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(primoSuggerimento)}`;
-  const rispostaEsatta = await fetch(urlEsatta, { headers: INTESTAZIONI });
+  const rispostaEsatta = await fetch(urlEsatta, opzioniFetch());
   logDebug(
     `[DEBUG Scryfall] Ricerca esatta sul primo suggerimento autocomplete '${primoSuggerimento}': status =`,
     rispostaEsatta.status
@@ -110,7 +131,7 @@ async function cercaCartaAutocomplete(nomeCarta: string) {
 
 async function cercaCartaTestuale(nomeCarta: string) {
   const urlSearch = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(nomeCarta)}&order=relevance`;
-  const rispostaSearch = await fetch(urlSearch, { headers: INTESTAZIONI });
+  const rispostaSearch = await fetch(urlSearch, opzioniFetch());
   logDebug(`[DEBUG Scryfall] Tentativo search testuale per '${nomeCarta}': status =`, rispostaSearch.status);
 
   verificaRispostaScryfall(rispostaSearch, `la ricerca testuale di "${nomeCarta}"`);
@@ -223,9 +244,7 @@ async function cercaDatiCartaSuScryfall(nomeCarta: string): Promise<EsitoRicerca
     const rulings: string[] = [];
     if (carta.rulings_uri) {
       await attendi(100);
-      const rispostaRulings = await fetch(carta.rulings_uri, {
-        headers: INTESTAZIONI,
-      });
+      const rispostaRulings = await fetch(carta.rulings_uri, opzioniFetch());
       // Anche qui la distinzione conta: senza, un guasto momentaneo sui rulings farebbe memorizzare
       // per sempre una carta con l'elenco dei rulings vuoto, che è peggio di riprovare più tardi.
       verificaRispostaScryfall(rispostaRulings, `il recupero dei rulings di "${carta.name}"`);
