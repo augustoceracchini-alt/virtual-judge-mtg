@@ -231,7 +231,7 @@ Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge
 - **Rilevatore di citazioni senza fonte** in `route.ts` (`numeriDiRegolaCitati` / `regoleCitateSenzaFonte`): se il verdetto cita un numero di regola che NON compare negli estratti forniti, il modello l'ha preso dalla propria memoria. Finisce in `console.error` e fa scattare la FASE E. Prima la FASE E guardava solo il testo delle regole RECUPERATE, quindi restava inerte proprio quando il recupero aveva fallito, cioè nel caso peggiore
 - Snellimento del codice a parità di comportamento, 7 commit su `simplify/judge-cleanup` (vedi la sezione dedicata più sotto per il metodo e per le semplificazioni valutate e scartate): codice morto e ripetizioni rimosse, costanti del recupero raccolte in cima a `rules.ts`, e le due funzioni lunghe (`cercaBlocchiPertinenti`, `POST`) spezzate nei loro passi. Verificato con confronto **byte per byte** dell'output del recupero su 23 casi: impronta SHA256 identica dal primo all'ultimo commit
 - Il prompt della FASE D distingue ora "estratti presenti" da "estratti pertinenti": deve dichiarare apertamente quando nessuna fonte affronta direttamente il caso, invece di trattare la presenza di estratti come garanzia che siano quelli giusti
-- **L'output della FASE A è normalizzato subito dopo `JSON.parse`** (`lib/estrazione.ts`, provato da `npm run prova-estrazione`): `Array.isArray` dice solo che il campo è un array, non cosa contiene, quindi `{"card_names": [42]}` — un JSON perfettamente valido — lo superava, e più a valle `cercaDatiCarta(42)` chiamava `.trim()` su un numero facendo rispondere **500 all'intera richiesta**. Da qui in poi i tre campi sono `string[]` per costruzione. È lo stesso principio già applicato alla cronologia da `normalizzaCronologia`: **l'uscita di un modello linguistico è input non fidato**, alla pari del corpo di una richiesta HTTP. La deduplicazione ignora maiuscole e minuscole come `senzaDoppioni` in `lib/rules.ts`, e non è un dettaglio estetico: `cercaRegoleTorneo` NON deduplica e assegna un punto per parola, quindi due copie della stessa parola spostano l'ordine dei blocchi MTR — e l'ordine decide quali regole sopravvivono alla troncatura a `LIMITE_CARATTERI`
+- **L'output della FASE A è normalizzato subito dopo `JSON.parse`** (`lib/estrazione.ts`, provato da `npm run prova-estrazione`): `Array.isArray` dice solo che il campo è un array, non cosa contiene, quindi `{"card_names": [42]}` — un JSON perfettamente valido — lo superava, e più a valle `cercaDatiCarta(42)` chiamava `.trim()` su un numero facendo rispondere **500 all'intera richiesta**. Da qui in poi i tre campi sono `string[]` per costruzione. È lo stesso principio già applicato alla cronologia da `normalizzaCronologia`: **l'uscita di un modello linguistico è input non fidato**, alla pari del corpo di una richiesta HTTP. La deduplicazione ignora maiuscole e minuscole come `senzaDoppioni` in `lib/rules.ts`, e non è un dettaglio estetico: il punteggio assegna un punto per parola, quindi due copie della stessa parola spostano l'ordine dei blocchi — e l'ordine decide quali regole sopravvivono alla troncatura a `LIMITE_CARATTERI`. **Fino al 26 agosto 2026 `cercaRegoleTorneo` NON deduplicava**, a differenza della ricerca nelle CR: ora entrambe passano da `preparaParoleChiave` (vedi "Deduplica anche nell'MTR" più sotto)
 - **Le citazioni senza fonte sono ricalcolate DOPO la FASE E**, non solo sulla risposta della FASE D. La FASE E riscrive il verdetto, e riscrivendolo può introdurre un numero di regola che negli estratti non c'è: calcolando una volta sola prima della verifica, proprio la citazione inventata dal revisore restava invisibile — il caso peggiore, perché la FASE E esiste per correggere il verdetto e lì lo peggiorava senza lasciare traccia. Il calcolo precedente resta, ma serve solo a decidere se eseguire la verifica. **Il log è uno solo**, sulla risposta definitiva: loggare anche prima avrebbe segnalato due volte la stessa anomalia tutte le volte che la FASE E non cambia il verdetto, cioè spesso, visto che restituisce il testo immutato sia quando conferma sia quando fallisce per quota esaurita. L'etichetta del log dice quale fase ha prodotto il testo che cita. **Il ramo con la segnalazione è stato unito** (25 agosto 2026), e l'aggancio richiesto qui è stato fatto: `diagnostica.citazioniSenzaFonte` nella risposta prende il valore **ricalcolato dopo la FASE E**, non quello pre-verifica. Nel ramo era il contrario, perché lì il calcolo era uno solo e stava prima della verifica; il merge ha tenuto la versione di master e ha collegato la diagnostica al valore definitivo. Resta la distinzione fra i due: `citazioniSenzaFonteFaseD` decide **se** eseguire la verifica, `citazioniSenzaFonte` è ciò che viene loggato e restituito al client
 
 ## Coerenza delle risposte: la generazione deterministica (agosto 2026)
@@ -898,6 +898,80 @@ il giudice ha di nuovo parafrasato la 113.7a («un'abilita' sulla pila e' un ogg
 dalla fonte») invece di citarne il numero — con la regola **presente negli estratti**, verificato nei
 log. E' la voce gia' registrata in "Cosa manca ancora": il posto in cui intervenire e' il prompt
 della FASE D, non `lib/rules.ts`.
+
+## Deduplica anche nell'MTR, e il buco del banco di prova (26 agosto 2026)
+
+`cercaRegoleTorneo` usa ora `preparaParoleChiave` come la ricerca nelle CR, quindi **deduplica**
+le parole chiave. Prima non lo faceva, e assegnando un punto per ogni parola presente nel blocco
+una parola ripetuta valeva doppio o triplo.
+
+**I doppioni non sono ipotetici**: `route.ts` costruisce `keywordCombinate` come
+`[...keywords, ...paroleTipoLinea]`, e le parole della riga del tipo di Scryfall si sovrappongono a
+quelle di Gemini senza che nessuno dei due lo sappia. Due incantesimi in gioco bastano a far valere
+"Enchantment" il doppio. Contare tre volte "deck" perché tre carte hanno "Deck" nella riga del tipo
+misura quante carte ci sono, non quanto la domanda parli di mazzi.
+
+**Quanto conta davvero, misurato dopo aver quasi sbagliato la diagnosi.** La prima misura usava
+`["sideboard","Sideboard","deck","deck","deck","game"]` e mostrava un cambio di SELEZIONE:
+spariva "6.7 Pioneer Format Deck Construction" ed entravano altre tre sottosezioni. Quel
+vocabolario però **non può esistere in produzione**: "deck" non è mai una parola della riga del
+tipo di Scryfall, e `lib/estrazione.ts` deduplica già le parole di Gemini fra loro, quindi "deck"
+tre volte è impossibile. I doppioni veri sono **solo parole di TIPO ripetute su più carte**.
+
+Rimisurato su **400 vocabolari realistici** (otto insiemi di parole da domanda di torneo per dieci
+parole di tipo, ripetute da 2 a 6 volte): la deduplica cambia gli estratti in **22 casi**, e sono
+**tutte differenze di solo ordine**. I casi in cui cambia *quali* regole arrivano al modello sono
+**zero**.
+
+Confermato dal vivo il 26 agosto 2026 contro la produzione, domanda di torneo che nomina Lightning
+Bolt, Counterspell e Duress: il vocabolario reale è
+`["sideboard","deck","match","game","cards","library","Instant","Instant","Sorcery"]` — con un
+doppione autentico, "Instant" due volte perché due carte sono istantanei — e gli estratti MTR con
+e senza deduplica sono **identici byte per byte**, 17938 caratteri entrambi.
+
+**Conclusione onesta: la modifica è giusta in linea di principio** (contare due volte "Instant"
+misura quante carte ci sono, non quanto la domanda parli di istantanei) **ma il suo effetto
+osservabile in produzione è il riordino dei blocchi, non una diversa selezione di regole.** Le CR
+non sono toccate affatto: impronta di tutti i casi CR identica (`c308c540f52dd8be`).
+
+**La lezione, di nuovo la stessa:** un vocabolario di prova inventato può essere non solo più
+pulito della realtà, ma anche **più sporco in un modo che la realtà non produce**. Prima di
+dichiarare l'effetto di una modifica al recupero, va controllato che l'input della misura sia
+generabile da `route.ts`.
+
+**La lezione vera sta però nel banco di prova, e vale oltre questo caso.** I 14 casi di
+`casi-di-prova.mjs` passano **14/14 identici sia prima sia dopo**: non vedono la differenza,
+perché le loro parole chiave sono scritte a mano e quindi **non hanno mai doppioni**, mentre la
+produzione ne ha sempre. Un banco di prova con input più puliti della realtà non misura la realtà.
+Per accorgersene sono serviti tre casi con parole duplicate aggiunti a mano all'impronta SHA256; di
+quei tre, **uno solo** cambiava risultato.
+
+**La guardia che c'è, e quello che NON garantisce.** In `scripts/casi-di-prova.mjs` c'è un
+quindicesimo caso, "Doppioni amplificati: guardia sintetica sulla deduplica MTR", che fallisce se
+qualcuno toglie la deduplica dall'MTR (verificato eseguendo il banco contro il `lib/rules.ts` di
+master: 14/15 con la riga "1 REGRESSIONI"). Usa però di proposito un doppione **amplificato e non
+realistico** ("deck" tre volte), ed è dichiarato nel commento del caso: con i doppioni veri la
+deduplica cambia solo l'ordine, e `prova-ricerca` verifica la presenza di un testo, non la sua
+posizione. Afferma quindi che il meccanismo sia collegato, non che serva a qualcosa in produzione.
+
+Conseguenza sui numeri: `prova-ricerca` passa **15/15**, e `prova-verifica` riporta ora
+**10 scatti su 15 (67%)** invece di 10 su 14 — è cambiato il denominatore, non il comportamento
+della FASE E: gli stessi 10 casi la fanno scattare.
+
+Da qui una regola per i prossimi refactor di `lib/rules.ts`: **l'impronta va presa anche su input
+che imitano quelli veri** (parole ripetute, maiuscole miste, tipi generici di Scryfall), non solo
+sui casi ufficiali. Altrimenti "impronta identica" certifica soltanto che non è cambiato nulla nelle
+condizioni da laboratorio.
+
+**Provata dal vivo il 26 agosto 2026**: l'utente ha verificato una domanda di torneo con
+`npm run dev` e ha riportato che funziona correttamente. Nessuna regressione osservata.
+
+**Quanto vale questa conferma, detto onestamente**: è **una** osservazione, senza che siano stati
+registrati la domanda esatta né le sezioni MTR recuperate. Basta a escludere che la modifica abbia
+rotto qualcosa di evidente, non a dimostrare che il recupero dell'MTR sia migliorato — la
+differenza misurata riguarda **quali** sezioni sopravvivono alla troncatura, e per vederla
+servirebbe una domanda che tocchi proprio quelle. Vale il limite già registrato altrove in questo
+file: una esecuzione non chiude una questione.
 
 ## Banco di prova manuale (scenario benchmark a 3 turni)
 

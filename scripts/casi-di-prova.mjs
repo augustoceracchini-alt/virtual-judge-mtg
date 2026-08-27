@@ -234,6 +234,30 @@ export const CASI = [
     statoIniziale: "PASSA",
   },
   {
+    // GUARDIA SINTETICA sulla deduplica delle parole chiave nell'MTR. Il nome dice "amplificati"
+    // perché questo schema di doppioni NON può accadere in produzione, e la distinzione è stata
+    // pagata con una diagnosi sbagliata: "deck" non è mai una parola della riga del tipo di
+    // Scryfall, e lib/estrazione.ts deduplica già le parole di Gemini fra loro, quindi "deck" tre
+    // volte è impossibile. I doppioni veri sono solo parole di TIPO ripetute su più carte
+    // ("Instant" due volte per due istantanei), misurate dal vivo.
+    //
+    // Il caso resta perché è l'unico modo di far fallire il banco di prova se qualcuno toglie la
+    // deduplica: con i doppioni REALISTICI la deduplica cambia solo l'ORDINE dei blocchi, mai
+    // quali arrivano (misurato su 400 vocabolari: 22 differenze, tutte di solo ordine), e
+    // prova-ricerca controlla la presenza di un testo, non la sua posizione. Amplificare il
+    // doppione è quindi l'unico modo di rendere osservabile il meccanismo.
+    //
+    // Cosa afferma davvero: che preparaParoleChiave sia applicata anche a cercaRegoleTorneo.
+    // Cosa NON afferma: che in produzione la deduplica cambi le regole viste dal modello.
+    nome: "Doppioni amplificati: guardia sintetica sulla deduplica MTR",
+    fonte: "MTR",
+    paroleChiave: ["sideboard", "game", "match", "deck", "deck", "deck", "Creature"],
+    regoleCitate: [],
+    attesi: ["3.16 Sideboard", "2.1 Match Structure"],
+    nonVoluti: [],
+    statoIniziale: "PASSA",
+  },
+  {
     nome: "Sideboard in torneo",
     fonte: "MTR",
     paroleChiave: ["sideboard", "deck registration"],
