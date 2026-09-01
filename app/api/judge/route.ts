@@ -21,7 +21,8 @@ import {
   MODELLO_VERIFICA,
   BUDGET_RAGIONAMENTO_VERIFICA,
   CONFIGURAZIONE_DETERMINISTICA,
-  TIMEOUT_GEMINI_MS,
+  TIMEOUT_GEMINI_ESTRAZIONE_MS,
+  TIMEOUT_GEMINI_VERDETTO_MS,
   TIMEOUT_GEMINI_VERIFICA_MS,
 } from "@/lib/generazione";
 import { classificaErroreGemini, eseguiConRiprova, rispostaPerGuasto } from "@/lib/rete";
@@ -386,20 +387,33 @@ export async function POST(request: NextRequest) {
     // riceve verdetti diversi. Vale per entrambe le fasi, ed e' la FASE A a contare di piu' di
     // quanto sembri: parole chiave diverse portano a capitoli diversi, quindi a un verdetto che
     // parte gia' da fonti diverse.
-    const model = genAI.getGenerativeModel(
-      {
-        model: MODELLO_STANDARD,
-        generationConfig: CONFIGURAZIONE_DETERMINISTICA,
-      },
-      { timeout: TIMEOUT_GEMINI_MS }
-    );
+    // Due oggetti per lo STESSO modello Gemini, che differiscono solo per il tempo massimo
+    // concesso. Non è una duplicazione da accorpare: la FASE A è una mini-estrazione da meno di un
+    // secondo, la FASE D scrive il verdetto e il suo fallimento fa perdere l'intera risposta,
+    // quindi meritano tetti diversi (il perché di ciascun valore è in lib/generazione.ts).
+    // Costruirli entrambi non costa nulla: `getGenerativeModel` assembla solo un oggetto, non
+    // apre nessuna connessione.
+    const impostazioniModelloStandard = {
+      model: MODELLO_STANDARD,
+      generationConfig: CONFIGURAZIONE_DETERMINISTICA,
+    };
+    const modelEstrazione = genAI.getGenerativeModel(impostazioniModelloStandard, {
+      timeout: TIMEOUT_GEMINI_ESTRAZIONE_MS,
+    });
+    const modelVerdetto = genAI.getGenerativeModel(impostazioniModelloStandard, {
+      timeout: TIMEOUT_GEMINI_VERDETTO_MS,
+    });
 
     const testoCronologia = cronologia
       .map((messaggio) => `${messaggio.ruolo === "utente" ? "Utente" : "Giudice"}: ${messaggio.testo}`)
       .join("\n\n");
 
     // FASE A: estrai parole chiave, numeri di regola e nomi di carte citati in tutta la conversazione finora
-    const { keywords, citedRules, cardNames } = await eseguiEstrazioneFaseA(model, domanda, testoCronologia);
+    const { keywords, citedRules, cardNames } = await eseguiEstrazioneFaseA(
+      modelEstrazione,
+      domanda,
+      testoCronologia
+    );
 
     cronometro.tappa("FASE A (Gemini: estrazione)");
 
@@ -495,7 +509,7 @@ export async function POST(request: NextRequest) {
     const result = await eseguiConRiprova(
       () =>
         haImmagine
-          ? model.generateContent([
+          ? modelVerdetto.generateContent([
               promptSistema,
               {
                 inlineData: {
@@ -504,7 +518,7 @@ export async function POST(request: NextRequest) {
                 },
               },
             ])
-          : model.generateContent(promptSistema),
+          : modelVerdetto.generateContent(promptSistema),
       haImmagine ? "FASE D (verdetto, con immagine)" : "FASE D (verdetto)"
     );
     let risposta = result.response.text();

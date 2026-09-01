@@ -107,8 +107,35 @@ export const CONFIGURAZIONE_DETERMINISTICA = {
 // sono perciò molto larghi rispetto ai tempi misurati, per non troncare una chiamata sana che
 // stesse solo andando piano.
 //
-// FASE A misurata 0,6-0,9 s e FASE D 1,5-2,1 s: 25 secondi sono più di dieci volte tanto.
-export const TIMEOUT_GEMINI_MS = 25000;
+// La FASE A è una mini-estrazione: misurata 0,6-0,9 s, e 768 ms nell'ultima osservazione reale.
+// Venticinque secondi sono più di trenta volte tanto. Se una chiamata così breve non torna entro
+// quel tempo non sta andando piano, è appesa.
+export const TIMEOUT_GEMINI_ESTRAZIONE_MS = 25000;
+
+// **La FASE D ha un tetto suo, e più alto, per un errore commesso e misurato dal vivo il 1°
+// settembre 2026.** Inizialmente condivideva i 25 secondi della FASE A, con questa motivazione:
+// «FASE D misurata 1,5-2,1 s, 25 secondi sono più di dieci volte tanto». Il ragionamento era
+// sbagliato, e il modo in cui era sbagliato vale più del numero.
+//
+// **Un tetto non si ricava dal tempo TIPICO di una chiamata, ma da quanto può durare al massimo
+// una chiamata che poi RIESCE.** Quel secondo dato non era stato misurato — esiste solo la mediana
+// — e da lì è stato estrapolato un massimo. Su una domanda vera al terzo turno (Cyclonic Rift con
+// Sovraccarico contro una creatura con Protezione dal Blu) la FASE D ha superato i 25 secondi:
+// FASE A 768 ms, FASE B 2 ms, FASE C 212 ms, totale della richiesta 26,8 s, quindi quasi tutto il
+// tempo era della sola FASE D. Il tetto l'ha tagliata e l'utente ha perso la risposta — che prima
+// della modifica, senza alcun limite, con ogni probabilità sarebbe arrivata.
+//
+// **Perché proprio questa fase merita più margine di tutte:** è l'unica il cui fallimento non
+// lascia niente. La FASE A che fallisce fa perdere le fonti, ma la FASE E ha un fallback (torna il
+// verdetto non verificato) e la FASE B pure (si risponde senza i dati di quella carta). La FASE D
+// invece PRODUCE la risposta: se cade, cade tutto, e con essa il lavoro delle fasi precedenti.
+// Fra i due errori possibili — tetto troppo largo (l'utente aspetta di più) e tetto troppo stretto
+// (l'utente non riceve niente) — il secondo è molto peggiore, quindi il valore va scelto largo.
+//
+// 45 secondi, come la FASE E e per la stessa ragione: sopra qualunque durata plausibile di una
+// chiamata che riesce, e sotto il tetto della piattaforma, così l'utente riceve un messaggio
+// onesto invece che un'interruzione secca di Vercel.
+export const TIMEOUT_GEMINI_VERDETTO_MS = 45000;
 
 // La FASE E è un caso a parte e il suo valore è scelto per una ragione diversa. È la fase più
 // lenta dell'app (15,0-20,9 s misurati a budget 1024, e 27,6 s in una sonda isolata), quindi il
@@ -117,5 +144,9 @@ export const TIMEOUT_GEMINI_MS = 25000;
 // restituisce il verdetto della FASE D non verificato, che è comunque una risposta utile. Se invece
 // a interromperla è la piattaforma, quel fallback non viene mai eseguito e l'utente perde anche il
 // verdetto già scritto. 45 secondi stanno sopra il peggior tempo mai misurato e sotto il tetto
-// della funzione (una richiesta da 54,3 s è andata a buon fine, quindi il limite è oltre il minuto).
+// della funzione. Attenzione: il tetto vero della piattaforma NON è noto con certezza — la
+// richiesta da 54,3 s che era stata citata come prova è poi risultata un probabile errore di
+// misura (vedi "Il cold start è ~0,6 s" in CLAUDE.md). Sommando i casi peggiori, FASE D e FASE E
+// insieme potrebbero superarlo: è un rischio residuo accettato, perché prima di questi due valori
+// la durata non era limitata affatto, quindi il caso peggiore era comunque più grave.
 export const TIMEOUT_GEMINI_VERIFICA_MS = 45000;
