@@ -436,7 +436,11 @@ i 429, cercandolo sia in `errorDetails` sia in coda al messaggio, dove la librer
 richiesta rimasta appesa faceva aspettare l'app senza fine, e l'unica cosa che la fermava era la
 piattaforma, che interrompe la funzione buttando via **tutto il lavoro già fatto**.
 
-- `TIMEOUT_GEMINI_MS` = 25 s per FASI A e D (misurate 0,6-0,9 s e 1,5-2,1 s: più di dieci volte tanto).
+- `TIMEOUT_GEMINI_ESTRAZIONE_MS` = 25 s per la FASE A (misurata 0,6-0,9 s, e 768 ms in
+  un'osservazione reale: più di trenta volte tanto).
+- `TIMEOUT_GEMINI_VERDETTO_MS` = 45 s per la FASE D. **Era 25 s condivisi con la FASE A, ed è stato
+  un errore misurato dal vivo il 1° settembre 2026** — vedi "Un tetto non si ricava dalla mediana"
+  qui sotto.
 - `TIMEOUT_GEMINI_VERIFICA_MS` = 45 s per la FASE E, scelto con un criterio diverso: sopra il
   peggior tempo mai misurato (27,6 s) ma **sotto il tetto della piattaforma**, perché la FASE E ha
   un fallback che vale la pena far scattare — se a interromperla è Vercel, quel fallback non viene
@@ -450,6 +454,49 @@ piattaforma, che interrompe la funzione buttando via **tutto il lavoro già fatt
 è una FUNZIONE e non una costante, perché `AbortSignal.timeout()` comincia a contare **nel momento
 in cui viene creato**. Un segnale costruito una volta sola al caricamento del modulo scadrebbe otto
 secondi dopo l'avvio del processo e da lì in poi farebbe fallire ogni chiamata all'istante.
+
+### Un tetto non si ricava dalla mediana (1° settembre 2026)
+
+**Il difetto è durato meno di un giorno, ma il modo in cui è nato vale più della correzione.**
+Provando l'app a mano subito dopo il commit dei timeout, una domanda vera («Il Giocatore A lancia
+Cyclonic Rift con il costo di Sovraccarico, il Giocatore B controlla una creatura con Protezione dal
+Blu») è morta con «Il giudice ci ha messo troppo tempo a rispondere». Dai log: FASE A 768 ms,
+FASE B 2 ms, FASE C 212 ms, totale della richiesta **26,8 s** — quindi quasi tutto il tempo era
+della sola FASE D, che il tetto di 25 s ha interrotto.
+
+**Era una regressione, non un difetto preesistente venuto a galla:** prima di quel commit non
+esisteva alcun limite, quindi quella domanda avrebbe risposto, solo più lentamente.
+
+**L'errore di ragionamento.** Il 25 era stato scelto così: «la FASE D è misurata 1,5-2,1 s,
+venticinque secondi sono più di dieci volte tanto». Ma **un tetto non si ricava dal tempo TIPICO di
+una chiamata: si ricava da quanto può durare al massimo una chiamata che poi RIESCE.** Di quel
+secondo dato non esisteva alcuna misura — del tempo della FASE D c'è solo la mediana — e da lì era
+stato estrapolato un massimo. È la stessa trappola già registrata due volte in questo file per la
+FASE E (i suoi tempi variano da 7,6 a 27,6 s a parità di richiesta): **la mediana di una chiamata a
+un modello non dice niente sulla sua coda.**
+
+**Perché la FASE D merita più margine di tutte:** è l'unica il cui fallimento non lascia niente. La
+FASE B che fallisce fa rispondere senza i dati di una carta, la FASE E ha il fallback al verdetto
+non verificato, la FASE D invece PRODUCE la risposta. Fra i due errori possibili — tetto troppo
+largo (l'utente aspetta di più) e tetto troppo stretto (l'utente non riceve niente) — il secondo è
+molto peggiore, quindi il valore va scelto largo.
+
+**Corretto e verificato dal vivo:** con 45 s la stessa domanda risponde correttamente. Sappiamo
+quindi che quella chiamata sta fra i 25 e i 45 secondi; **il valore preciso non è stato registrato**
+e non vale la pena inseguirlo.
+
+**Un'ipotesi scartata lungo la strada, per non riproporla.** Si era pensato che la lentezza venisse
+dalla cronologia accumulata («era la terza domanda, quindi il prompt era grosso»). **Falso, e la
+schermata dell'utente lo mostra**: in quella conversazione c'era solo quel messaggio, nessuna
+risposta precedente. Il prompt era di dimensione normale, quindi la FASE D può superare i 25 secondi
+anche al PRIMO turno.
+
+**Rischio residuo, dichiarato apertamente.** Il tetto vero della piattaforma non è noto: la richiesta
+da 54,3 s che era stata citata come prova è registrata altrove in questo file come probabile errore
+di misura. Sommando i casi peggiori, FASE D (45 s) e FASE E (45 s) potrebbero superarlo. È accettato
+perché prima di questi valori la durata non era limitata affatto, quindi il caso peggiore era
+comunque più grave. Se un giorno servisse chiuderlo, la strada è dare alla FASE E il tempo RIMASTO
+entro un tetto complessivo, non abbassare i due valori.
 
 ### Verificato dal vivo, non solo col banco di prova
 
