@@ -136,7 +136,11 @@ function messaggioPerErroreDiPiattaforma(codiceHttp: number): string {
   if (codiceHttp === 413) {
     return "La foto allegata è troppo pesante per essere inviata. Riprova con una foto più piccola, oppure senza allegato.";
   }
-  if (codiceHttp === 408 || codiceHttp === 502 || codiceHttp === 504) {
+  if (codiceHttp === 408 || codiceHttp === 502 || codiceHttp === 503 || codiceHttp === 504) {
+    // Il 503 c'e' perche' ora anche la NOSTRA API puo' rispondere cosi', quando Gemini e'
+    // sovraccarico (vedi rispostaPerGuasto in lib/rete.ts). In quel caso il messaggio giusto arriva
+    // gia' dal campo `errore` del JSON e questa riga non viene usata; serve per il 503 che puo'
+    // arrivare dalla piattaforma, prima che il nostro codice venga eseguito.
     return "Il giudice ci ha messo troppo tempo a rispondere. Riprova fra qualche istante.";
   }
   if (codiceHttp === 429) {

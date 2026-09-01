@@ -29,6 +29,8 @@ avviso solo se c'è davvero un rischio. Se una spiegazione lunga serve, chiedere
 
 - `npm run prova-estrazione` — banco di prova della normalizzazione dell'output della FASE A (`lib/estrazione.ts`): 28 casi limite, gratuito e istantaneo come gli altri `prova-*` (non chiama Gemini, non tocca la rete). A differenza di `prova-ricerca` **non ha fallimenti noti da cui migliorare**: ogni caso è un'affermazione su cosa la funzione deve fare, quindi un caso rosso è un difetto e l'uscita è diversa da zero
 
+- `npm run prova-rete` — banco di prova della reazione ai guasti di rete (`lib/rete.ts`): 60 casi, gratuito e istantaneo come gli altri `prova-*` (non chiama Gemini, non tocca la rete, e **non aspetta davvero** perché la funzione di attesa viene sostituita con una finta). Come `prova-estrazione` non ha fallimenti noti: ogni caso è un'affermazione, un caso rosso è un difetto, l'uscita è diversa da zero. Esiste perché questo comportamento è quasi impossibile da provare a mano — per vederlo bisognerebbe esaurire la quota di Gemini apposta, e nel mezzo di una richiesta
+
 - `npm run sonda-fase-e` — sonda diagnostica della FASE E: misura **dove** va il suo tempo, riportando i token letti, quelli di ragionamento interno e quelli scritti. `-- 256` prova un budget di ragionamento, `-- 256 sbagliato` sottopone un verdetto con la conclusione invertita per controllare che la correzione scatti ancora. **Chiama Gemini davvero**, quindi consuma la quota stretta di `gemini-3.6-flash` (~20/giorno): va usata con parsimonia, non in cicli
 
 - `npm run sonda-citazioni [ripetizioni]` — misura se il giudice CITA il numero di una regola che ha davvero fra gli estratti, ripetendo la stessa domanda N volte sulla sola FASE D e contando. Usa `gemini-3.5-flash-lite`, quota generosa, quindi si può ripetere — a differenza di `sonda-fase-e`. Serve perché «il modello parafrasa invece di citare» è un'impressione finché non la si conta: usata così, ha smentito una diagnosi che il progetto portava avanti da tre osservazioni (5 citazioni su 5)
@@ -57,6 +59,7 @@ Non esiste una suite di test automatici end-to-end. Il metodo di verifica standa
 - `lib/prompts.ts` — testo dei tre prompt inviati a Gemini (FASI A, D, E). Assembla soltanto, non decide nulla: le fasi e il loro ordine stanno in `route.ts`. Il testo è il risultato di molte iterazioni, va modificato con prudenza
 - `lib/debug.ts` — `DEBUG_ATTIVO` e `logDebug` condivisi da `route.ts` e `lib/scryfall.ts`
 - `lib/limite.ts` — `richiestaConsentita(ip)`, limite di richieste per IP in memoria del processo
+- `lib/rete.ts` — che tipo di guasto è un errore di rete, se ha senso riprovare, quanto aspettare e cosa dire all'utente: `classificaErroreGemini()`, `attesaPrimaDiRiprovare()`, `eseguiConRiprova()`, `rispostaPerGuasto()`. Sta qui e **senza alias `@/`** per essere importabile da `scripts/prova-rete.mjs`, come `lib/estrazione.ts` e `lib/verifica.ts`. Vedi "Guasti di rete e quota di Gemini" più sotto
 - `lib/generazione.ts` — come parliamo con Gemini: nomi dei modelli, budget di ragionamento della FASE E e `CONFIGURAZIONE_DETERMINISTICA` (vedi "Coerenza delle risposte" più sotto). Sta qui e non in `route.ts` perché le sonde devono misurare le impostazioni REALI usate in produzione, non una copia scritta nello script — stessa ragione di `lib/verifica.ts`, e quindi **niente alias `@/`** e nessun import, nemmeno di un tipo
 - `lib/verifica.ts` — `contieneRegolaCondizionaleComplessa()` e la lista `INDICATORI_REGOLA_CONDIZIONALE`: decidono se far scattare la FASE E. Stanno qui e non in `route.ts` per essere importabili da `scripts/prova-verifica.mjs` (quindi **niente alias `@/`** in questo file); vedi "Quando scatta la FASE E" per il criterio con cui si aggiunge o toglie una voce
 - `lib/estrazione.ts` — `normalizzaEstrazioneFaseA()` e `normalizzaListaTesti()`: riducono l'output JSON della FASE A a tre `string[]` sicuri (solo stringhe, ripulite, senza vuote né doppioni, entro limiti di numero e lunghezza). Anche questo file sta in `lib/` e **senza alias `@/`** per essere importabile da `scripts/prova-estrazione.mjs`: se il controllo restasse in `route.ts`, l'unico modo di provarlo sarebbe riscriverne una copia nella sonda. I tre limiti sono costanti in cima al file, ciascuna col perché di quel valore — in particolare i nomi di carta ne hanno uno molto più alto delle parole chiave, perché il nome più lungo mai stampato in Magic è di 141 caratteri
@@ -70,7 +73,7 @@ Non esiste una suite di test automatici end-to-end. Il metodo di verifica standa
 - `data/errata-locali.json` — lista di correzioni manuali scritte a mano (non generata da uno script); anche questa va committata e dichiarata in `next.config.ts`, stessa regola degli altri due file dati
 - `scripts/prepara-regole.mjs` — script Node (ESM) che rigenera `regole-compatte.json` da `comprehensive-rules.txt`
 - `scripts/prepara-regole-torneo.mjs` — script Node (ESM) che rigenera `mtr-compatte.json` da `tournament-rules.pdf` (usa `pdf-parse`, dipendenza di sviluppo: non finisce nel bundle di produzione)
-- `scripts/prova-ricerca.mjs`, `scripts/prova-copertura.mjs` e `scripts/prova-estrazione.mjs` — banco di prova della ricerca, sonda delle discussioni e banco di prova della normalizzazione FASE A (vedi "Comandi principali"). Importano i moduli reali di `lib/` sfruttando lo type stripping nativo di Node, quindi misurano il codice che va in produzione e non una copia della sua logica. Per questo i moduli che devono restare importabili da qui **non usano l'alias `@/`**, che Node non risolve
+- `scripts/prova-ricerca.mjs`, `scripts/prova-copertura.mjs`, `scripts/prova-estrazione.mjs` e `scripts/prova-rete.mjs` — banco di prova della ricerca, sonda delle discussioni, banco di prova della normalizzazione FASE A e banco di prova della reazione ai guasti di rete (vedi "Comandi principali"). Importano i moduli reali di `lib/` sfruttando lo type stripping nativo di Node, quindi misurano il codice che va in produzione e non una copia della sua logica. Per questo i moduli che devono restare importabili da qui **non usano l'alias `@/`**, che Node non risolve
 - `scripts/sonda-coerenza.mjs` — sonda della coerenza (vedi "Comandi principali"). Importa `lib/generazione.ts` per usare le impostazioni vere, non una copia
 - `scripts/genera-icone-pwa.mjs` — genera le icone e gli screenshot PWA in `public/` (usa `sharp`, va lanciato solo se le icone cambiano)
 
@@ -195,6 +198,7 @@ e per un eventuale cambio di piattaforma, ma non contarci come difesa reale.
 Il progetto era originariamente in C:\Users\augus\OneDrive\Desktop\virtual-judge-mtg — causava file salvati a 0 byte (placeholder cloud non sincronizzati, attributo ReparsePoint) e conflitti di lockfile. Il progetto è stato spostato in C:\ProgettiDev\virtual-judge-mtg, FUORI da OneDrive. Non ricreare mai il progetto dentro cartelle sincronizzate da OneDrive/Dropbox/Google Drive.
 
 ## Cosa è già stato implementato
+- **Reazione ai guasti di rete e alla quota di Gemini** (`lib/rete.ts`, provata da `npm run prova-rete`): messaggi che dicono all'utente cosa è successo davvero invece di un 500 buono per tutto, riprova automatica una volta sui guasti passeggeri, e un tempo massimo su OGNI chiamata verso l'esterno — prima non ce l'aveva nessuna. Verificato anche dal vivo contro la libreria reale, non solo col banco di prova. Vedi "Guasti di rete e quota di Gemini"
 - **Generazione deterministica** in tutte e tre le fasi (`CONFIGURAZIONE_DETERMINISTICA` in `lib/generazione.ts`): senza, Gemini sorteggiava la risposta a ogni invio. Vedi "Coerenza delle risposte" per cosa promette, cosa no, e i due numeri ancora da prendere
 - **Segnalazione dei problemi da parte degli utenti**, con la diagnostica del recupero allegata per rendere il caso riproducibile — vedi "Segnalazioni degli utenti"
 - Form domanda testuale + verdetto con citazioni reali da CR
@@ -363,6 +367,158 @@ cronologia.
 Verificato dal vivo con `npm run dev` e quattro richieste: segnalazione valida (`{"salvata":true,
 "issue":null}` e riga `[SEGNALAZIONE]` completa nei log), tipo non valido (400), segnalazione senza
 domanda né risposta (400), corpo non JSON (500).
+
+## Guasti di rete e quota di Gemini (27 agosto 2026)
+
+**Il difetto, in una frase: il modo più probabile in cui l'app fallisce davvero era anche quello
+peggio gestito.** Il piano gratuito di Gemini consente **15 richieste al MINUTO per modello**
+(misurato dal vivo: l'errore 429 riporta `GenerateRequestsPerMinutePerProjectPerModel-FreeTier,
+limit: 15`) e ogni domanda dell'utente ne consuma 2 o 3 fra FASE A, FASE D ed eventuale FASE E.
+Bastano quindi cinque o sei domande ravvicinate, o due persone che usano l'app nello stesso minuto.
+
+Quel 429 risaliva fino al `catch` generale di `/api/judge`, che rispondeva **500 con «Si è
+verificato un errore durante l'elaborazione della domanda»**: lo stesso identico messaggio dato per
+una chiave API mancante. All'utente non veniva detto né che la sua domanda andava benissimo, né che
+bastava aspettare un minuto. **La lezione era già stata imparata e applicata in
+`scripts/sonda-coerenza.mjs`** — che mette una pausa fra le richieste e riprova una volta — ma solo
+lì, cioè in uno strumento di misura, e non dove la vedono le persone.
+
+Tre cose sono cambiate, e sono indipendenti.
+
+**1. I guasti sono classificati, e il messaggio dice la verità.** `classificaErroreGemini` in
+`lib/rete.ts` distingue sei esiti, e `rispostaPerGuasto` mappa ciascuno su un codice HTTP e un
+messaggio in italiano:
+
+| tipo | quando | risposta |
+|---|---|---|
+| `quota` | 429 | 429 — «aspetta un minuto e rimandala», dicendo esplicitamente che la domanda non ha nulla che non va |
+| `sovraccarico` | 5xx | 503 |
+| `timeout` | la risposta non è arrivata in tempo | 504 |
+| `rete` | la richiesta non è nemmeno partita | 502 |
+| `definitivo` | 4xx diverso da 429 (chiave sbagliata, richiesta malformata) | 500, messaggio generico |
+| `sconosciuto` | nient'altro | 500, messaggio generico |
+
+Gli ultimi due tengono il messaggio generico di proposito: sono problemi di chi gestisce il
+servizio, e suggerire all'utente di aspettare sarebbe un consiglio falso.
+
+**Un dettaglio che sembra un cavillo e non lo è: l'annullamento NON si riconosce dal `name`
+dell'errore.** Le classi di errore di `@google/generative-ai` (`GoogleGenerativeAIAbortError` e
+sorelle) non impostano `this.name`, quindi valgono tutte `"Error"` — verificato leggendo
+`node_modules/@google/generative-ai/dist/index.mjs`. L'unico segnale affidabile è la frase
+`Request aborted when fetching` che la libreria scrive nel messaggio. C'è un caso di
+`prova-rete` che esiste solo per impedire che qualcuno ci riprovi.
+
+**2. Le FASI A e D si riprovano UNA volta, la FASE E no.** Non è un'incoerenza, è la conseguenza di
+due situazioni diverse: A e D fallendo fanno perdere la risposta del tutto, mentre la FASE E ha già
+un suo modo di fallire bene (restituisce il verdetto della FASE D non verificato). Sulla FASE E,
+inoltre, la risorsa scarsa è il TEMPO: vale già 15-21 secondi, e un secondo tentativo rischierebbe
+di sfondare il tetto di durata della funzione facendo perdere all'utente anche il verdetto già
+scritto — cioè esattamente il danno che si voleva evitare. Su quota esaurita riprovare non
+servirebbe comunque, visto che `MODELLO_VERIFICA` ha ~20 richieste al giorno, non al minuto.
+
+Quanto si aspetta prima di riprovare lo decide `attesaPrimaDiRiprovare`, e **le tre volte in cui
+restituisce «non riprovare» sono la parte importante**:
+
+- **il guasto è definitivo o sconosciuto** — riprovare rifarebbe lo stesso errore;
+- **è scaduto il tempo** — gliel'avevamo già dato, rifarlo raddoppierebbe l'attesa dell'utente per
+  poi con ogni probabilità scadere di nuovo. **È questa regola a tenere limitata la durata
+  complessiva**: è il motivo per cui un timeout e una riprova non possono sommarsi;
+- **Google chiede più di `MASSIMA_ATTESA_RIPROVA_MS` (6 s)** — sopra quella soglia si smette e si
+  dice all'utente quanto aspettare, perché un'informazione che lui può usare vale più di un'attesa
+  muta dentro una richiesta che la piattaforma potrebbe interrompere. Un 429 **senza** suggerimento
+  di attesa significa quasi sempre quota GIORNALIERA finita, e lì aspettare qualche secondo non
+  serve a niente.
+
+Il tempo suggerito da Google si legge dal blocco `RetryInfo` (`retryDelay: "27s"`) che accompagna
+i 429, cercandolo sia in `errorDetails` sia in coda al messaggio, dove la libreria lo ricopia.
+
+**3. Ogni chiamata verso l'esterno ha ora un tempo massimo. Prima NESSUNA ce l'aveva.** Una
+richiesta rimasta appesa faceva aspettare l'app senza fine, e l'unica cosa che la fermava era la
+piattaforma, che interrompe la funzione buttando via **tutto il lavoro già fatto**.
+
+- `TIMEOUT_GEMINI_ESTRAZIONE_MS` = 25 s per la FASE A (misurata 0,6-0,9 s, e 768 ms in
+  un'osservazione reale: più di trenta volte tanto).
+- `TIMEOUT_GEMINI_VERDETTO_MS` = 45 s per la FASE D. **Era 25 s condivisi con la FASE A, ed è stato
+  un errore misurato dal vivo il 1° settembre 2026** — vedi "Un tetto non si ricava dalla mediana"
+  qui sotto.
+- `TIMEOUT_GEMINI_VERIFICA_MS` = 45 s per la FASE E, scelto con un criterio diverso: sopra il
+  peggior tempo mai misurato (27,6 s) ma **sotto il tetto della piattaforma**, perché la FASE E ha
+  un fallback che vale la pena far scattare — se a interromperla è Vercel, quel fallback non viene
+  mai eseguito e l'utente perde anche il verdetto già scritto.
+- `TIMEOUT_SCRYFALL_MS` = 8 s per ogni chiamata a Scryfall, lo stesso valore già scelto per GitHub
+  in `app/api/segnalazione/route.ts`. Rinunciare lì non fa fallire la domanda: l'errore finisce nel
+  `try/catch` di `cercaDatiCartaSuScryfall`, la carta **non** viene messa in cache (si riproverà al
+  turno dopo) e il giudice risponde con le regole ma senza i dati di quella carta.
+
+**Attenzione a un tranello che è stato evitato per un soffio:** `opzioniFetch()` in `lib/scryfall.ts`
+è una FUNZIONE e non una costante, perché `AbortSignal.timeout()` comincia a contare **nel momento
+in cui viene creato**. Un segnale costruito una volta sola al caricamento del modulo scadrebbe otto
+secondi dopo l'avvio del processo e da lì in poi farebbe fallire ogni chiamata all'istante.
+
+### Un tetto non si ricava dalla mediana (1° settembre 2026)
+
+**Il difetto è durato meno di un giorno, ma il modo in cui è nato vale più della correzione.**
+Provando l'app a mano subito dopo il commit dei timeout, una domanda vera («Il Giocatore A lancia
+Cyclonic Rift con il costo di Sovraccarico, il Giocatore B controlla una creatura con Protezione dal
+Blu») è morta con «Il giudice ci ha messo troppo tempo a rispondere». Dai log: FASE A 768 ms,
+FASE B 2 ms, FASE C 212 ms, totale della richiesta **26,8 s** — quindi quasi tutto il tempo era
+della sola FASE D, che il tetto di 25 s ha interrotto.
+
+**Era una regressione, non un difetto preesistente venuto a galla:** prima di quel commit non
+esisteva alcun limite, quindi quella domanda avrebbe risposto, solo più lentamente.
+
+**L'errore di ragionamento.** Il 25 era stato scelto così: «la FASE D è misurata 1,5-2,1 s,
+venticinque secondi sono più di dieci volte tanto». Ma **un tetto non si ricava dal tempo TIPICO di
+una chiamata: si ricava da quanto può durare al massimo una chiamata che poi RIESCE.** Di quel
+secondo dato non esisteva alcuna misura — del tempo della FASE D c'è solo la mediana — e da lì era
+stato estrapolato un massimo. È la stessa trappola già registrata due volte in questo file per la
+FASE E (i suoi tempi variano da 7,6 a 27,6 s a parità di richiesta): **la mediana di una chiamata a
+un modello non dice niente sulla sua coda.**
+
+**Perché la FASE D merita più margine di tutte:** è l'unica il cui fallimento non lascia niente. La
+FASE B che fallisce fa rispondere senza i dati di una carta, la FASE E ha il fallback al verdetto
+non verificato, la FASE D invece PRODUCE la risposta. Fra i due errori possibili — tetto troppo
+largo (l'utente aspetta di più) e tetto troppo stretto (l'utente non riceve niente) — il secondo è
+molto peggiore, quindi il valore va scelto largo.
+
+**Corretto e verificato dal vivo:** con 45 s la stessa domanda risponde correttamente. Sappiamo
+quindi che quella chiamata sta fra i 25 e i 45 secondi; **il valore preciso non è stato registrato**
+e non vale la pena inseguirlo.
+
+**Un'ipotesi scartata lungo la strada, per non riproporla.** Si era pensato che la lentezza venisse
+dalla cronologia accumulata («era la terza domanda, quindi il prompt era grosso»). **Falso, e la
+schermata dell'utente lo mostra**: in quella conversazione c'era solo quel messaggio, nessuna
+risposta precedente. Il prompt era di dimensione normale, quindi la FASE D può superare i 25 secondi
+anche al PRIMO turno.
+
+**Rischio residuo, dichiarato apertamente.** Il tetto vero della piattaforma non è noto: la richiesta
+da 54,3 s che era stata citata come prova è registrata altrove in questo file come probabile errore
+di misura. Sommando i casi peggiori, FASE D (45 s) e FASE E (45 s) potrebbero superarlo. È accettato
+perché prima di questi valori la durata non era limitata affatto, quindi il caso peggiore era
+comunque più grave. Se un giorno servisse chiuderlo, la strada è dare alla FASE E il tempo RIMASTO
+entro un tetto complessivo, non abbassare i due valori.
+
+### Verificato dal vivo, non solo col banco di prova
+
+`npm run prova-rete` passa **60 casi su 60**, ma prova errori costruiti a tavolino: dice che la
+logica è giusta, non che gli errori VERI abbiano la forma che ci aspettiamo. Servivano quindi due
+prove contro la libreria reale, ed entrambe sono state fatte con `npm run dev`:
+
+| prova | come | esito |
+|---|---|---|
+| errore permanente | chiave API non valida | Gemini risponde `400 API_KEY_INVALID`, classificato `definitivo`, **0 riprove** (nessuna seconda chiamata sprecata), risposta 500 generica |
+| scadenza | `TIMEOUT_GEMINI_MS` forzato a 1 ms | messaggio `Request aborted when fetching ...`, classificato `timeout`, **0 riprove**, risposta **504** con «Il giudice ci ha messo troppo tempo a rispondere» |
+
+La seconda prova è quella che vale di più: dimostra in un colpo solo che la libreria onora davvero
+il campo `timeout` di `RequestOptions`, che il messaggio ha esattamente la forma che il
+classificatore cerca (e che il `name` sarebbe stato inutile), e che la regola «un timeout non si
+riprova» funziona.
+
+**Quello che NON è stato verificato dal vivo: il 429 vero e la riprova andata a buon fine.** Per
+vederli bisognerebbe esaurire la quota apposta e nel mezzo di una richiesta. Sono coperti dal banco
+di prova con errori ricalcati sulla forma reale (`status` numerico, blocco `RetryInfo`), il che è
+molto meglio di niente ma non è la stessa cosa. Se un giorno capitasse un 429 vero in produzione, il
+log `[RETE]` lo dice a chiare lettere: vale la pena andarlo a controllare invece di darlo per buono.
 
 ## Prestazioni misurate in produzione
 
@@ -1011,7 +1167,8 @@ correttamente, e nel browser, dove la pagina è giusta. Da sapere per non insegu
 c'è — i browser decodificano il JSON come UTF-8 per specifica, a prescindere dall'header.
 
 ## Cosa manca ancora (in ordine di priorità discusso con l'utente)
-- **Prendere i due numeri della coerenza** (`npm run sonda-coerenza` con e senza `libero`) e rimisurare la FASE E con `npm run sonda-fase-e` nelle due direzioni: la generazione deterministica è scritta e verificata staticamente, ma il suo effetto reale non è ancora misurato. Finché quei numeri non ci sono, non si sa se servano anche gli interventi più grossi discussi (memorizzazione della risposta su chiave di idempotenza, nucleo strutturato del verdetto) o se la conclusione fosse già stabile e a variare fosse solo la prosa
+- ~~**Prendere i due numeri della coerenza** e rimisurare la FASE E nelle due direzioni.~~ **FATTO**, e questa voce era rimasta qui per svista fino al 27 agosto 2026 — chi cercava «il prossimo punto» leggeva come primo elemento della lista un lavoro già concluso. I numeri ci sono entrambi: la coerenza è stata misurata il 24 agosto su 10 ripetizioni (vedi "Misurata: NON produce risposte ripetibili") e la FASE E il 25 agosto su 6+6 esecuzioni (vedi "Il numero: circa una volta su due"). **La domanda che questa voce poneva ha quindi una risposta: gli interventi più grossi NON servono per la correttezza**, perché su quello scenario la conclusione era già stabile (nessun verdetto sbagliato in 20 esecuzioni) e a variare era solo la prosa. La memorizzazione della risposta su chiave di idempotenza resta l'unica strada praticabile **se e quando** la coerenza TESTUALE diventasse un obiettivo, non prima
+- **Lezione da questa svista, che vale oltre il caso**: una lista di cose da fare invecchia in silenzio, e a differenza del codice non c'è nessun banco di prova che se ne accorga. Quando un lavoro viene concluso, la voce corrispondente va barrata **nello stesso commit**, come è stato fatto per la pesatura per rarità
 - Ottimizzazione velocità — **il fronte è uno solo: la FASE E**. Due passi fatti: indicatori più selettivi (da 9 scatti su 13 a 8) e **budget di ragionamento**, che l'ha quasi dimezzata (vedi "Il tempo della FASE E è ragionamento" più sotto). L'idea che era scritta qui, «ridurre il testo che la FASE E riceve», **è stata misurata ed è sbagliata**: il tempo non sta nella lettura. Resta da provare **mostrare subito il verdetto della FASE D correggendolo dopo**, che azzererebbe l'attesa percepita senza toccare la correttezza finale — è ora l'unica leva grossa rimasta, ed è architetturale, non di prompt. Infrastruttura, file dati e cold start sono stati misurati ed esclusi. Il dizionario locale IT-EN in `lib/dizionario.ts` **è declassato**: varrebbe meno di un secondo su dieci
 - Decisione di prodotto da prendere: se il parse JSON della FASE A fallisce, oggi il giudice risponde senza fonti avvisando l'utente. L'alternativa è restituire un errore. Il log c'è già, la decisione no
 - ~~**Estendere la pesatura per rarità al punteggio dei blocchi.**~~ **FATTO** (19 agosto 2026, branch `pesatura-rarita`) — vedi "Pesatura per rarità estesa" più sotto per l'esito, il costo e i due errori commessi lungo la strada. Il testo che segue è la formulazione originale del problema, lasciata perché descrive bene il difetto:
